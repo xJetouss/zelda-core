@@ -1,0 +1,8 @@
+[package]
+name = "magic_regen"
+version = "0.3.0"
+edition = "2021"
+description = "Magie füllt sich langsam von selbst wieder auf."
+
+[lib]
+crate-type = ["cdylib"]

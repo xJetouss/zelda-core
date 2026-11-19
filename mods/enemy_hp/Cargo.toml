@@ -1,0 +1,8 @@
+[package]
+name = "enemy_hp"
+version = "0.3.0"
+edition = "2021"
+description = "Zeigt über jedem Gegner, wie viel Leben er noch hat."
+
+[lib]
+crate-type = ["cdylib"]

@@ -1,0 +1,8 @@
+[package]
+name = "day_night"
+version = "0.3.0"
+edition = "2021"
+description = "Auf der Oberwelt wird es alle 6 Minuten Abend und Nacht, dann wieder Tag. Oben rechts zeigt eine Uhr die Tageszeit."
+
+[lib]
+crate-type = ["cdylib"]

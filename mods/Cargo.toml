@@ -1,0 +1,28 @@
+# Mods für pastlink (jede Mod eine DLL). Bauen: `cargo build --release` in diesem Ordner,
+# die DLLs liegen dann in `target/release`. Veröffentlicht werden sie im GitHub-Release „mods“ (Mod-Shop).
+[workspace]
+resolver = "2"
+members = [
+    "enemy_hp",
+    "speedrun",
+    "info_hud",
+    "slowmo",
+    "hard_damage",
+    "one_hit",
+    "double_rupees",
+    "heart_regen",
+    "magic_regen",
+    "day_night",
+    "tunic_colors",
+    "rainbow_enemies",
+    "crown",
+    "coin_sound",
+    "full_supply",
+]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

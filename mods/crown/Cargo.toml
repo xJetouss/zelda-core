@@ -1,0 +1,8 @@
+[package]
+name = "crown"
+version = "0.3.0"
+edition = "2021"
+description = "Link trägt eine goldene Krone (Bild aus einer PNG-Datei über dem Spielbild)."
+
+[lib]
+crate-type = ["cdylib"]

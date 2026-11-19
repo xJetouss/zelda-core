@@ -1,0 +1,8 @@
+[package]
+name = "hard_damage"
+version = "0.3.0"
+edition = "2021"
+description = "Schwerer: Jeder Treffer kostet doppelt so viele Herzen."
+
+[lib]
+crate-type = ["cdylib"]

@@ -1,0 +1,8 @@
+[package]
+name = "one_hit"
+version = "0.3.0"
+edition = "2021"
+description = "Hardcore: Jeder Treffer ist tödlich (Feen retten weiterhin)."
+
+[lib]
+crate-type = ["cdylib"]

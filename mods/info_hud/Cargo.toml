@@ -1,0 +1,8 @@
+[package]
+name = "info_hud"
+version = "0.3.0"
+edition = "2021"
+description = "Position, Gebiet/Raum, Gegnerzahl und Lag-Bilder unten am Rand."
+
+[lib]
+crate-type = ["cdylib"]

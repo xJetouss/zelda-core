@@ -1,0 +1,8 @@
+[package]
+name = "double_rupees"
+version = "0.3.0"
+edition = "2021"
+description = "Jede eingesammelte Rubine zählt doppelt."
+
+[lib]
+crate-type = ["cdylib"]

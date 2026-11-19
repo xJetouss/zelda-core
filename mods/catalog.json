@@ -1,0 +1,139 @@
+{
+  "mods": [
+    {
+      "id": "enemy_hp",
+      "file": "enemy_hp.dll",
+      "name": "Gegner-Lebensbalken",
+      "name_en": "Enemy health bars",
+      "desc": "Zeigt über jedem Gegner, wie viel Leben er noch hat.",
+      "desc_en": "Shows how much health each enemy has left.",
+      "version": "0.3.0"
+    },
+    {
+      "id": "speedrun",
+      "file": "speedrun.dll",
+      "name": "Speedrun-Timer",
+      "name_en": "Speedrun timer",
+      "desc": "Spielzeit oben links, mit Zwischenzeiten für jedes Amulett und jeden Kristall.",
+      "desc_en": "In-game time top left, with splits for every pendant and crystal.",
+      "version": "0.3.0"
+    },
+    {
+      "id": "info_hud",
+      "file": "info_hud.dll",
+      "name": "Info-Anzeige",
+      "name_en": "Info HUD",
+      "desc": "Position, Gebiet/Raum, Gegnerzahl und Lag-Bilder unten am Rand.",
+      "desc_en": "Position, area/room, enemy count and lag frames at the bottom.",
+      "version": "0.3.0"
+    },
+    {
+      "id": "slowmo",
+      "file": "slowmo.dll",
+      "name": "Zeitlupe (L halten)",
+      "name_en": "Slow motion (hold L)",
+      "desc": "Solange L gedrückt ist, läuft das Spiel mit halber Geschwindigkeit.",
+      "desc_en": "While L is held the game runs at half speed.",
+      "version": "0.3.0"
+    },
+    {
+      "id": "hard_damage",
+      "file": "hard_damage.dll",
+      "name": "Doppelter Schaden",
+      "name_en": "Double damage",
+      "desc": "Schwerer: Jeder Treffer kostet doppelt so viele Herzen.",
+      "desc_en": "Harder: every hit costs twice as many hearts.",
+      "version": "0.3.0"
+    },
+    {
+      "id": "one_hit",
+      "file": "one_hit.dll",
+      "name": "Ein-Treffer-Modus",
+      "name_en": "One-hit mode",
+      "desc": "Hardcore: Jeder Treffer ist tödlich (Feen retten weiterhin).",
+      "desc_en": "Hardcore: every hit is fatal (fairies still save you).",
+      "version": "0.3.0"
+    },
+    {
+      "id": "double_rupees",
+      "file": "double_rupees.dll",
+      "name": "Doppelte Rubine",
+      "name_en": "Double rupees",
+      "desc": "Jede eingesammelte Rubine zählt doppelt.",
+      "desc_en": "Every collected rupee counts twice.",
+      "version": "0.3.0"
+    },
+    {
+      "id": "heart_regen",
+      "file": "heart_regen.dll",
+      "name": "Herz-Regeneration",
+      "name_en": "Heart regeneration",
+      "desc": "Im Spiel alle 8 Sekunden ein halbes Herz zurück.",
+      "desc_en": "In game, half a heart back every 8 seconds.",
+      "version": "0.3.0"
+    },
+    {
+      "id": "magic_regen",
+      "file": "magic_regen.dll",
+      "name": "Magie-Regeneration",
+      "name_en": "Magic regeneration",
+      "desc": "Magie füllt sich langsam von selbst wieder auf.",
+      "desc_en": "Magic slowly refills by itself.",
+      "version": "0.3.0"
+    },
+    {
+      "id": "day_night",
+      "file": "day_night.dll",
+      "name": "Tag & Nacht",
+      "name_en": "Day & night",
+      "desc": "Auf der Oberwelt wird es alle 6 Minuten Abend und Nacht, dann wieder Tag. Oben rechts zeigt eine Uhr die Tageszeit.",
+      "desc_en": "On the overworld it turns to evening and night every 6 minutes, then day again. A clock top right shows the time of day.",
+      "version": "0.3.0"
+    },
+    {
+      "id": "tunic_colors",
+      "file": "tunic_colors.dll",
+      "name": "Regenbogen-Tunika",
+      "name_en": "Rainbow tunic",
+      "desc": "Links Tunika wechselt fließend durch alle Farben (Sprite-Palette).",
+      "desc_en": "Link's tunic smoothly cycles through all colours (sprite palette).",
+      "version": "0.3.0"
+    },
+    {
+      "id": "rainbow_enemies",
+      "file": "rainbow_enemies.dll",
+      "name": "Bunte Gegner",
+      "name_en": "Colourful enemies",
+      "desc": "Alle Gegner und Figuren schillern in wechselnden Farben (Sprite-Paletten 1–6).",
+      "desc_en": "All enemies and characters shimmer in changing colours (sprite palettes 1–6).",
+      "version": "0.3.0"
+    },
+    {
+      "id": "crown",
+      "file": "crown.dll",
+      "name": "Königskrone",
+      "name_en": "Royal crown",
+      "desc": "Link trägt eine goldene Krone (Bild aus einer PNG-Datei über dem Spielbild).",
+      "desc_en": "Link wears a golden crown (image from a PNG file over the game).",
+      "version": "0.3.0"
+    },
+    {
+      "id": "coin_sound",
+      "file": "coin_sound.dll",
+      "name": "Münz-Klang",
+      "name_en": "Coin chime",
+      "desc": "Jede Rubine klingt zusätzlich wie eine Münze (eigener Ton über die Ton-Schnittstelle).",
+      "desc_en": "Every rupee also chimes like a coin (own sound via the sound interface).",
+      "version": "0.3.0"
+    },
+    {
+      "id": "full_supply",
+      "file": "full_supply.dll",
+      "name": "Voller Vorrat",
+      "name_en": "Full supply",
+      "desc": "Bomben, Pfeile und Magie bleiben immer voll (sobald du sie hast).",
+      "desc_en": "Bombs, arrows and magic always stay full (once you have them).",
+      "version": "0.3.0"
+    }
+  ]
+}

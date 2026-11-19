@@ -1,0 +1,8 @@
+[package]
+name = "heart_regen"
+version = "0.3.0"
+edition = "2021"
+description = "Im Spiel alle 8 Sekunden ein halbes Herz zurück."
+
+[lib]
+crate-type = ["cdylib"]
