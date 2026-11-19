@@ -201,3 +201,45 @@ impl Shop {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Echter Shop: Liste von GitHub laden, alle Mods installieren (in den Mod-Ordner neben der Test-.exe), laden
+    #[test]
+    #[ignore]
+    fn dev_shop() {
+        let wait = |s: &Shop, done: &dyn Fn(&Shop) -> bool| {
+            for _ in 0..600 {
+                if done(s) {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            panic!("Zeitüberschreitung");
+        };
+        let _ = std::fs::remove_dir_all(dir());
+        let shop = Shop::default();
+        shop.refresh();
+        wait(&shop, &|s| s.status() != Status::Loading);
+        assert!(shop.status() == Status::Ready, "Liste nicht geladen");
+        let items = shop.items();
+        println!("{} Mods im Shop", items.len());
+        for it in &items {
+            assert!(shop.have(it) == Have::No);
+            shop.install(it, false);
+        }
+        wait(&shop, &|s| items.iter().all(|it| s.have(it) != Have::Busy));
+        for it in &items {
+            println!("{:20} {:?}", it.file, shop.error_of(&it.id));
+            assert!(shop.have(it) == Have::Installed);
+        }
+        assert!(shop.take_new());
+        let m = super::super::Mods::new();
+        let e = m.entries(false);
+        println!("geladen: {}, Fehler: {:?}", e.len(), m.errors);
+        assert_eq!(e.len(), items.len());
+        assert!(m.errors.is_empty());
+    }
+}
