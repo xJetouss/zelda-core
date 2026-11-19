@@ -671,7 +671,7 @@ impl Mods {
 
 /// Mod-Vorlage (Beispielprojekt + Doku) in `dir/pastlink-mod-vorlage` schreiben
 pub fn export_template(dir: &Path) -> std::io::Result<PathBuf> {
-    let root = dir.join("pastlink-mod-vorlage");
+    let root = dir.join("zelda-core-mod-vorlage");
     std::fs::create_dir_all(root.join("src"))?;
     std::fs::write(root.join("Cargo.toml"), include_str!("../../assets/mod_template/Cargo.toml.txt"))?;
     std::fs::write(root.join("README.md"), include_str!("../../assets/mod_template/README.md"))?;

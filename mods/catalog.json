@@ -88,7 +88,7 @@
       "name_en": "Day & night",
       "desc": "Auf der Oberwelt wird es alle 6 Minuten Abend und Nacht, dann wieder Tag. Oben rechts zeigt eine Uhr die Tageszeit.",
       "desc_en": "On the overworld it turns to evening and night every 6 minutes, then day again. A clock top right shows the time of day.",
-      "version": "0.3.0"
+      "version": "0.3.1"
     },
     {
       "id": "tunic_colors",

@@ -190,7 +190,7 @@ pub fn generate(rom: &[u8], trace: &str, min_count: u64) -> (String, Stats) {
         let _ = writeln!(table, "    (0x{start:06x}, {}, 0x{:016x}, b{start:06x}),", bytes.len(), hash(&bytes));
     }
     let mut src = String::new();
-    let _ = writeln!(src, "// Automatisch erzeugt vom pastlink-Recompiler (src/recomp/gen.rs) – nicht von Hand ändern.");
+    let _ = writeln!(src, "// Automatisch erzeugt vom Zelda-Core-Recompiler (src/recomp/gen.rs) – nicht von Hand ändern.");
     let _ = writeln!(src, "// {} Blöcke, {} Befehle", stats.blocks, stats.insts);
     src.push_str(&out);
     let _ = writeln!(src, "pub static BLOCKS: &[(u32, u16, u64, BlockFn)] = &[");

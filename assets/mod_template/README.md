@@ -1,6 +1,6 @@
-# pastlink – Mod-Vorlage (Rust)
+# Zelda Core – Mod-Vorlage (Rust)
 
-Mods für pastlink sind Rust-Bibliotheken (DLL). Sie laufen im **Recompiled-Modus** (Knopf „RC“ oben rechts)
+Mods für Zelda Core sind Rust-Bibliotheken (DLL). Sie laufen im **Recompiled-Modus** (Knopf „RC“ oben rechts)
 und dürfen dort fast alles:
 
 - pro Spielbild Eingaben, RAM, VRAM, Paletten (CGRAM), Sprites (OAM) und sogar die ROM im Speicher ändern,
@@ -14,13 +14,13 @@ und dürfen dort fast alles:
 
 1. Rust installieren: <https://rustup.rs>
 2. In diesem Ordner: `cargo build --release`
-3. `target/release/mein_mod.dll` in den Ordner **`mods`** neben `pastlink.exe` kopieren
+3. `target/release/mein_mod.dll` in den Ordner **`mods`** neben `zelda-core.exe` kopieren
    (Menü „Mods“ → „Mod-Ordner öffnen“).
-4. In pastlink: „RC“ einschalten, Menü „Mods“ → „Mods neu laden“, dann die Mod anhaken.
+4. In Zelda Core: „RC“ einschalten, Menü „Mods“ → „Mods neu laden“, dann die Mod anhaken.
 
 ## Aufbau
 
-- `src/api.rs`: die Schnittstelle (nicht ändern; dieselbe Datei steckt in pastlink, Version 3).
+- `src/api.rs`: die Schnittstelle (nicht ändern; dieselbe Datei steckt in Zelda Core, Version 3).
 - `src/lib.rs`: deine Mod. Sie exportiert `pastlink_mod()` und liefert eine `ModInfo` mit Name,
   Beschreibung, `pre_frame` / `post_frame` und optional Hook-Adressen + `on_hook`.
 
@@ -58,7 +58,7 @@ extern "C" fn post_frame(api: *const Api) {
 | `cgram_patch(index, farben)` | Farben dauerhaft ersetzen (BGR555, z. B. `bgr555(0xFF8000)`) |
 | `png_tiles(bytes, bpp)` → (Kacheln, Palette) | PNG in SNES-Kacheln umwandeln, dann mit `vram_patch` einsetzen |
 | `patch_clear()` | eigene Grafik-/Farbänderungen entfernen |
-| `log(text)` | Meldung in pastlink anzeigen |
+| `log(text)` | Meldung in Zelda Core anzeigen |
 | `link_on_screen()` | Links Position auf dem Bildschirm |
 
 Links Sprite-Palette ist Reihe 7 (Farben `0xF0..0xFF`), Gegner nutzen die Reihen 1–6 (`0x90..0xEF`). Die
@@ -95,7 +95,7 @@ Routinen und Sprungzielen (JSR/JSL), also da, wo eine Routine betreten wird.
 ## Regeln
 
 - Eine Mod muss schnell sein (sie läuft 60-mal pro Sekunde) und darf nicht abstürzen. Eine Panic
-  über die C-Grenze beendet pastlink.
+  über die C-Grenze beendet Zelda Core.
 - Was eine Mod im RAM ändert, landet im Spielstand. Zustand in der Mod selbst (Variablen) nicht.
 - Paletten/VRAM lädt das Spiel oft selbst neu. Wer sie dauerhaft ändern will, schreibt sie jedes Bild
   in `post_frame` (oder ändert die Quelle im WRAM/ROM).

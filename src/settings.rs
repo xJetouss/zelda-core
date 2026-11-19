@@ -87,6 +87,11 @@ pub struct Settings {
     pub vsync_lock: bool,
     /// Zwischenbilder (Scrollen + Sprites interpoliert) für hohe Bildraten
     pub hi_fps: bool,
+    /// GBA: Bild glätten, ganzzahlig vergrößern, auf das Fenster strecken; zuletzt gespieltes GBA-Spiel
+    pub gba_smooth: bool,
+    pub gba_integer: bool,
+    pub gba_stretch: bool,
+    pub last_gba: String,
     /// Recompiled-Modus: übersetzter ROM-Code statt CPU-Emulation (Spielstände bleiben austauschbar)
     pub recompiled: bool,
     /// eingeschaltete Mods (Kennungen)
@@ -191,6 +196,10 @@ impl Default for Settings {
             volume: 0.8,
             mute: false,
             interp: 0,
+            gba_smooth: false,
+            gba_integer: true,
+            gba_stretch: false,
+            last_gba: String::new(),
             echo: true,
             voice_mute: 0,
             latency_ms: 30,
@@ -266,11 +275,17 @@ impl Settings {
             .ok()
             .and_then(|p| p.parent().map(|d| d.to_path_buf()))
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("pastlink.json")
+            .join("zelda-core.json")
+    }
+
+    /// frühere Einstellungsdatei (Programm hieß „pastlink“) – wird nur gelesen, nie geändert
+    fn old_path() -> PathBuf {
+        Self::path().with_file_name("pastlink.json")
     }
 
     pub fn load() -> Self {
-        let mut s: Settings = std::fs::read_to_string(Self::path()).ok().and_then(|t| serde_json::from_str(t.trim_start_matches('\u{feff}')).ok()).unwrap_or_default();
+        let src = if Self::path().is_file() { Self::path() } else { Self::old_path() };
+        let mut s: Settings = std::fs::read_to_string(src).ok().and_then(|t| serde_json::from_str(t.trim_start_matches('\u{feff}')).ok()).unwrap_or_default();
         if s.keys.len() != BUTTONS.len() {
             s.keys = default_keys();
         }

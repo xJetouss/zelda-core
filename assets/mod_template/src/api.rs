@@ -1,4 +1,4 @@
-//! pastlink Mod-Schnittstelle (C-ABI, Version 3). Mods laufen nur im Recompiled-Modus (RC).
+//! Zelda Core Mod-Schnittstelle (C-ABI, Version 3). Mods laufen nur im Recompiled-Modus (RC).
 //!
 //! Diese Datei ist in der App und in jeder Mod dieselbe. Nicht ändern: Die App prüft `PASTLINK_MOD_ABI`.
 //!

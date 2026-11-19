@@ -319,8 +319,8 @@ pub struct App {
     pub(crate) gilrs: Option<gilrs::Gilrs>,
     pub(crate) pro: SwitchPro,
     pub(crate) qm: QuickMenu,
-    qm_held: bool,
-    qm_dir: gfx::Vec2,
+    pub(crate) qm_held: bool,
+    pub(crate) qm_dir: gfx::Vec2,
     disp_dt: f64,
     pro_prev: u32,
     pro_connected: bool,
@@ -390,7 +390,7 @@ pub struct App {
     /// Steuerkreuz des Controllers (nur für Menüs, nicht fürs Spiel)
     ctl_dpad: u16,
     ctl_dpad_prev: u16,
-    game_fps_count: u32,
+    pub(crate) game_fps_count: u32,
     pub(crate) game_fps: f64,
     pub(crate) room_tex: HashMap<u16, gfx::TextureHandle>,
     /// Räume in voller Größe (Dungeon-Karte, hereingezoomt) und Zoom der Dungeon-Karte (Ziel, aktuell, Blickmitte)
@@ -411,8 +411,8 @@ pub struct App {
     cur: Vec<Color32>,
     prev: Vec<Color32>,
     blend: Vec<Color32>,
-    ftmp: Vec<Color32>,
-    fout: Vec<Color32>,
+    pub(crate) ftmp: Vec<Color32>,
+    pub(crate) fout: Vec<Color32>,
     pub(crate) lut: Vec<Color32>,
     lut_key: (bool, u32, u32, u32),
     tex_key: (Filter, bool),
@@ -430,6 +430,8 @@ pub struct App {
     pub(crate) win_cheats: bool,
     /// Fenster „Mod-Liste“
     pub(crate) win_mods: bool,
+    /// GBA-Modus (z. B. The Minish Cap, Kern mGBA)
+    pub(crate) gba: crate::gba::ui::GbaView,
     pub(crate) win_controls: bool,
     pub(crate) win_hotkeys: bool,
     pub(crate) show_bar: bool,
@@ -507,7 +509,7 @@ pub struct App {
     pub(crate) marker_label: String,
     pub(crate) marker_kind: MarkerKind,
     pub(crate) show_spoiler: bool,
-    states_prev_pad: u16,
+    pub(crate) states_prev_pad: u16,
     mode_prev: bool,
     prev_noclip: bool,
     title_frame: u32,
@@ -666,6 +668,7 @@ impl App {
             win_cheats: false,
             // Entwicklung: Fenster gleich beim Start öffnen (PASTLINK_OPEN=mods)
             win_mods: std::env::var("PASTLINK_OPEN").is_ok_and(|v| v == "mods"),
+            gba: Default::default(),
             win_controls: false,
             win_hotkeys: false,
             show_bar: true,
@@ -803,6 +806,12 @@ impl App {
     }
 
     pub(crate) fn load_rom(&mut self, path: PathBuf, force: bool) {
+        if crate::gba::is_gba(&path) {
+            self.gba_open(path);
+            return;
+        }
+        // SNES-Spiel: ein laufendes GBA-Spiel beenden
+        self.gba_close();
         // Recompiled-Modus: Spieldaten stecken in der .exe, die ROM-Datei wird nicht gelesen
         if self.s.recompiled {
             if let Some(d) = crate::recomp::embedded_rom(&path) {
@@ -960,6 +969,7 @@ impl App {
 
     /// Zurück zum Hauptmenü (Spiel schließen, Fenster zu)
     pub(crate) fn go_main_menu(&mut self) {
+        self.gba_close();
         self.win_states = false;
         self.win_map = false;
         self.inv_open = false;
@@ -987,6 +997,17 @@ impl App {
                 let dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_default();
                 v.insert(0, dir.join(format!("{name}.sfc")));
             }
+        }
+        // GBA-Spiele (z. B. The Minish Cap): zuletzt gespieltes und alle neben der .exe
+        if crate::gba::available() {
+            let last = PathBuf::from(&self.s.last_gba);
+            let mut g: Vec<PathBuf> = if last.is_file() { vec![last] } else { Vec::new() };
+            for p in crate::gba::ui::roms_next_to_exe() {
+                if !g.iter().any(|q| q.canonicalize().ok() == p.canonicalize().ok()) {
+                    g.push(p);
+                }
+            }
+            v.extend(g);
         }
         v
     }
@@ -1027,13 +1048,22 @@ impl App {
     // ------------------------------------------------------------ Spielstände (mit Bild)
 
     pub(crate) fn state_path(&self, slot: u8) -> Option<PathBuf> {
+        if let Some(g) = &self.gba.game {
+            return Some(crate::gba::state_path(&g.path, slot));
+        }
         self.game.as_ref().map(|g| g.path.with_extension(format!("ss{slot}")))
     }
     pub(crate) fn thumb_path(&self, slot: u8) -> Option<PathBuf> {
+        if let Some(g) = &self.gba.game {
+            return Some(g.path.with_extension(format!("gs{slot}.thumb")));
+        }
         self.game.as_ref().map(|g| g.path.with_extension(format!("ss{slot}.thumb")))
     }
 
     pub(crate) fn meta_path(&self, slot: u8) -> Option<PathBuf> {
+        if let Some(g) = &self.gba.game {
+            return Some(g.path.with_extension(format!("gs{slot}.meta")));
+        }
         self.game.as_ref().map(|g| g.path.with_extension(format!("ss{slot}.meta")))
     }
 
@@ -1076,6 +1106,10 @@ impl App {
     }
 
     pub(crate) fn save_slot(&mut self, slot: u8) {
+        if self.gba.active() {
+            self.gba_save_slot(slot);
+            return;
+        }
         let (Some(p), Some(tp), Some(mp)) = (self.state_path(slot), self.thumb_path(slot), self.meta_path(slot)) else { return };
         let meta = self.current_meta().unwrap_or_default();
         let g = self.game.as_ref().unwrap();
@@ -1129,6 +1163,9 @@ impl App {
 
     /// Spielzeit/Tode/Herzen eines Slots (zwischengespeichert, neu gelesen bei Änderung).
     pub(crate) fn slot_meta(&mut self, slot: u8) -> Option<SlotMeta> {
+        if self.gba.active() {
+            return None;
+        }
         let p = self.meta_path(slot)?;
         let mtime = std::fs::metadata(&p).and_then(|m| m.modified()).ok();
         if let Some((t, m)) = self.metas.get(&slot) {
@@ -1159,6 +1196,10 @@ impl App {
     }
 
     pub(crate) fn load_slot(&mut self, slot: u8) {
+        if self.gba.active() {
+            self.gba_load_slot(slot);
+            return;
+        }
         let Some(p) = self.state_path(slot) else { return };
         self.slot = slot;
         let (ok, empty) = (self.t("geladen", "loaded"), self.t("ist leer", "is empty"));
@@ -1360,6 +1401,16 @@ impl App {
             }
         }
         let tp = self.thumb_path(slot)?;
+        // GBA: Vorschaubild als RGBA (240×160)
+        if self.gba.active() {
+            let tex = std::fs::read(tp)
+                .ok()
+                .and_then(|d| lz4_flex::decompress_size_prepended(&d).ok())
+                .filter(|raw| raw.len() == crate::gba::W * crate::gba::H * 4)
+                .map(|raw| ctx.load_texture(format!("gthumb{slot}"), gfx::ColorImage::from_rgba_unmultiplied([crate::gba::W, crate::gba::H], &raw), gfx::TextureOptions::LINEAR));
+            self.thumbs.insert(slot, (Some(mtime), tex.clone()));
+            return tex.map(|t| (t, mtime));
+        }
         let tex = std::fs::read(tp)
             .ok()
             .and_then(|d| lz4_flex::decompress_size_prepended(&d).ok())
@@ -1980,7 +2031,7 @@ impl App {
     // ------------------------------------------------------------ Emulation
 
     /// Joypad-Bits: B=15 Y=14 Select=13 Start=12 Hoch=11 Runter=10 Links=9 Rechts=8 A=7 X=6
-    fn states_nav(&mut self, pressed: u16) {
+    pub(crate) fn states_nav(&mut self, pressed: u16) {
         if pressed == 0 {
             return;
         }
@@ -2217,7 +2268,7 @@ impl App {
     }
 
     pub(crate) fn popup_open(&self) -> bool {
-        self.win_states || self.win_rando || self.win_cheats || self.win_controls || self.win_hotkeys || self.win_mods
+        self.win_states || self.win_rando || self.win_cheats || self.win_controls || self.win_hotkeys || self.win_mods || self.gba.win_cheats
     }
 
     fn run_emulation(&mut self, pad: u16, turbo: bool, double: bool, rewind: bool) {
@@ -3464,6 +3515,29 @@ impl App {
         self.handle_rebind(ctx);
         let (mut pad, turbo, double, rewind) = self.gather_input(ctx);
         let menu_pad = pad | self.ctl_dpad;
+        // GBA-Modus: eigener Ablauf (keine Karte, kein Inventar, nichts am Spiel geändert)
+        if self.gba.active() {
+            if self.win_states {
+                // Spielstände per Controller/Tastatur – nichts geht ans Spiel
+                let pressed = menu_pad & !self.states_prev_pad;
+                self.states_prev_pad = menu_pad;
+                if self.win_pad_settings {
+                    let dt = ctx.input(|i| i.stable_dt).clamp(0.0, 0.1);
+                    self.pad_settings_input(pressed, menu_pad, dt);
+                } else {
+                    self.states_nav(pressed);
+                }
+                self.gba_frame(ctx, 0, false, false, focused, false, true);
+            } else {
+                self.states_prev_pad = pad;
+                self.gba_frame(ctx, pad, turbo, double, focused, rewind, false);
+            }
+            self.draw_ui(ctx);
+            self.periodic(ctx);
+            self.fps_count += 1;
+            ctx.request_repaint();
+            return;
+        }
         if self.game.is_none() {
             self.library_input(menu_pad);
         }
@@ -3580,6 +3654,7 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
+        self.gba_close();
         self.close_game();
         self.s.save();
     }

@@ -139,7 +139,42 @@ fn zelda3() {
     println!("cargo:rustc-cfg=pastlink_z3");
 }
 
+/// GBA-Kern: mGBA (vendor/mgba, MPL-2.0) als statische Bibliothek mit libretro-Schnittstelle, gebaut mit CMake.
+/// Ohne CMake oder vendor/mgba gibt es eben kein GBA (cfg `pastlink_gba` fehlt).
+fn mgba() {
+    println!("cargo:rustc-check-cfg=cfg(pastlink_gba)");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let src = root.join("vendor").join("mgba");
+    println!("cargo:rerun-if-changed={}", src.join("CMakeLists.txt").display());
+    println!("cargo:rerun-if-changed={}", src.join("src").join("platform").join("libretro").join("libretro.c").display());
+    if !src.join("CMakeLists.txt").exists() {
+        return;
+    }
+    let build = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("mgba-build");
+    let off = [
+        "BUILD_QT", "BUILD_SDL", "BUILD_STATIC", "BUILD_SHARED", "USE_FFMPEG", "USE_ZLIB", "USE_MINIZIP", "USE_PNG", "USE_LIBZIP", "USE_SQLITE3", "USE_ELF", "USE_LUA",
+        "USE_EPOXY", "USE_DISCORD_RPC", "ENABLE_SCRIPTING", "USE_EDITLINE", "M_CORE_GB", "BUILD_CINEMA", "USE_GDB_STUB",
+    ];
+    let mut cfg = std::process::Command::new("cmake");
+    cfg.arg("-S").arg(&src).arg("-B").arg(&build).args(["-DCMAKE_POLICY_VERSION_MINIMUM=3.5", "-DBUILD_LIBRETRO=ON", "-DSKIP_LIBRARY=ON"]);
+    for o in off {
+        cfg.arg(format!("-D{o}=OFF"));
+    }
+    let ok = cfg.output().map(|o| o.status.success()).unwrap_or(false)
+        && std::process::Command::new("cmake").arg("--build").arg(&build).args(["--config", "Release", "--target", "mgba_libretro", "--", "-m"]).output().map(|o| o.status.success()).unwrap_or(false);
+    if !ok {
+        println!("cargo:warning=mGBA (GBA-Kern) ließ sich nicht bauen – GBA nicht verfügbar (CMake installiert?)");
+        return;
+    }
+    println!("cargo:rustc-link-search=native={}", build.join("Release").display());
+    println!("cargo:rustc-link-lib=static=mgba_libretro");
+    println!("cargo:rustc-link-lib=ws2_32");
+    println!("cargo:rustc-link-lib=shlwapi");
+    println!("cargo:rustc-cfg=pastlink_gba");
+}
+
 fn main() {
+    mgba();
     zelda3();
     recompile();
     logo();

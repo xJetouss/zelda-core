@@ -81,7 +81,7 @@ macro_rules! export_mod {
             hook_count: 0,
             on_hook: None,
         };
-        /// Einstiegspunkt, den pastlink sucht
+        /// Einstiegspunkt, den Zelda Core sucht
         #[no_mangle]
         pub extern "C" fn pastlink_mod() -> *const api::ModInfo {
             &INFO

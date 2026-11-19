@@ -4095,29 +4095,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
 
 [[package]]
-name = "pastlink"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "cc",
- "cpal",
- "gilrs",
- "glow 0.14.2",
- "glutin",
- "gpui",
- "hidapi",
- "image",
- "lz4_flex",
- "raw-window-handle",
- "rfd",
- "serde",
- "serde_json",
- "smallvec",
- "windows-sys 0.59.0",
- "xbrz-rs",
-]
-
-[[package]]
 name = "pathfinder_geometry"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7642,6 +7619,29 @@ dependencies = [
  "x11rb",
  "xim-ctext",
  "xim-parser",
+]
+
+[[package]]
+name = "zelda-core"
+version = "0.35.0"
+dependencies = [
+ "bincode",
+ "cc",
+ "cpal",
+ "gilrs",
+ "glow 0.14.2",
+ "glutin",
+ "gpui",
+ "hidapi",
+ "image",
+ "lz4_flex",
+ "raw-window-handle",
+ "rfd",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "windows-sys 0.59.0",
+ "xbrz-rs",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-# Pastlink – Emulator nur für »A Link to the Past«
+# Zelda Core 0.35 – A Link to the Past & The Minish Cap
 
 Eigener SNES-Emulator in Rust, zugeschnitten auf *The Legend of Zelda: A Link to the Past*.
 **Keine ROM enthalten** – du brauchst eine Kopie deines eigenen Moduls (`.sfc`/`.smc`).
@@ -6,7 +6,7 @@ Alles steckt in der einen `.exe`: HD-Filter, Randomizer, Karte – nichts wird n
 
 ```
 cargo build --release
-target\release\pastlink.exe
+target\release\zelda-core.exe
 ```
 
 ## Start
@@ -15,7 +15,7 @@ target\release\pastlink.exe
   sonst Strg+O / Datei ins Fenster ziehen. Nur eine beim Start übergebene Datei („Öffnen mit“) startet sofort.
 * Das Intro wird standardmäßig übersprungen (direkt zur Spielerauswahl).
 * Die Spielsprache ist die der ROM (deutsche ROM = deutscher Text, PAL mit 50 Hz). Die Menüs folgen der Windows-Sprache.
-* Alle Einstellungen werden sofort gespeichert (`pastlink.json` neben der `.exe`).
+* Alle Einstellungen werden sofort gespeichert (`zelda-core.json` neben der `.exe`).
 * **Es wird nichts automatisch gespeichert außer deinen Savestates.** Der Speicherpunkt im Spiel (.srm) wird nur geschrieben,
   wenn du unter Datei „Spielinterne Spielstände speichern“ einschaltest.
 
@@ -92,7 +92,7 @@ Wird automatisch erkannt (eigener Treiber, kein Steam/BetterJoy nötig):
 
 ## Teleport
 
-* Jeder Eingang (Höhle, Haus, Dungeon), den du schon betreten hast, ist ein Teleport-Ziel. Pastlink liest das aus dem
+* Jeder Eingang (Höhle, Haus, Dungeon), den du schon betreten hast, ist ein Teleport-Ziel. Zelda Core liest das aus dem
   Spielstand (besuchte Räume), es funktioniert also auch mit alten Spielständen.
 * **Karte im Emulator (M oder ↓ am Controller):** Fadenkreuz in der Mitte auf einen Eingang (türkis = besucht) und **A**
   (oder anklicken). Im Dungeon-Reiter den Eingangsraum mit dem Stick wählen, rechter Stick wechselt das Stockwerk.
@@ -107,7 +107,7 @@ Wird automatisch erkannt (eigener Treiber, kein Steam/BetterJoy nötig):
 * **Über der Monitorfrequenz:** Unter *Grafik → Bildrate* gehen 120 bis 500 und „Unbegrenzt (1000)“ auch dann,
   wenn der Monitor weniger kann; gemessen auf 200 Hz: 500 → ~490 FPS, 1000 → ~900 FPS (kleines Fenster). Das Spiel
   bleibt bei 60 Spielbildern, der Gewinn ist weniger Verzögerung.
-* **Zwischenbilder:** Das Spiel selbst läuft mit 60 Bildern/s. Pastlink zeichnet dazwischen weitere Bilder, in denen
+* **Zwischenbilder:** Das Spiel selbst läuft mit 60 Bildern/s. Zelda Core zeichnet dazwischen weitere Bilder, in denen
   Scrollen und Figuren interpoliert sind (wie Ship of Harkinian), Standard **200 FPS**. Bildrate unter Grafik
   (Wechsel zu/von „Monitor (VSync)“ wirkt nach Neustart). Bei langsamer Bewegung (1 Pixel pro Spielbild) kann es nicht
   flüssiger werden als das Spiel selbst – schnelle Bewegungen wie Bildschirmwechsel profitieren am meisten.
@@ -117,7 +117,7 @@ Wird automatisch erkannt (eigener Treiber, kein Steam/BetterJoy nötig):
 * **HD läuft auf der Grafikkarte** (HD weich, Clean HD, Original, Weich): Kantenglättung nach xBR-Regeln direkt in
 * **HD Ultra (MMPX):** neuer Filter nach McGuire & Gagiu (2021) – vergrößert Pixel-Art in zwei Schritten 2×→4× und hält dabei Linien, Ecken und Formen scharf; Schrägen werden glatt, ohne zu verwischen.
   Bildschirmauflösung – kein Ruckeln beim Bewegen oder im Turbo. Die übrigen Filter laufen weiter auf der CPU.
-* **Breitbild / Fenster füllen:** Auf der Oberwelt zeichnet Pastlink die Ränder direkt aus der Gebietskarte des Spiels Der Kreis-Übergang beim Betreten/Verlassen von Häusern öffnet sich über die ganze Breite (kein kurzes 4:3 mehr). **Echtes Breitbild** (Grafik-Menü, standardmäßig aus): Gegner und Gegenstände leben und erscheinen bis 64 Pixel links und rechts außerhalb von 4:3 (ROM-Patches nach dem Vorbild von zelda3 `ExtendScreen64`).
+* **Breitbild / Fenster füllen:** Auf der Oberwelt zeichnet Zelda Core die Ränder direkt aus der Gebietskarte des Spiels Der Kreis-Übergang beim Betreten/Verlassen von Häusern öffnet sich über die ganze Breite (kein kurzes 4:3 mehr). **Echtes Breitbild** (Grafik-Menü, standardmäßig aus): Gegner und Gegenstände leben und erscheinen bis 64 Pixel links und rechts außerhalb von 4:3 (ROM-Patches nach dem Vorbild von zelda3 `ExtendScreen64`).
   (RAM + Kacheltabelle der ROM, mit Selbstprüfung) – vollständig und ohne falsche Bildteile. Hinter dem Gebietsrand bleibt
   es schwarz, weil das Spiel das Nachbargebiet erst beim Übergang lädt. In Räumen ist der ganze Raum geladen.
   Die Statusleiste wird geteilt (Items links, Energie rechts).
@@ -152,7 +152,7 @@ Besuchte Räume bekommen ein Bild des Raums, genommene Treppen werden mit ▲/�
 
 ## RC-Modus mit Zelda 3
 Im RC-Modus läuft die Spiellogik aus **Zelda 3** (https://github.com/snesrev/zelda3, MIT-Lizenz, © snesrev und
-Mitwirkende) statt der Emulation. pastlink zeichnet mit der eigenen PPU, deshalb funktionieren Breitbild, HD,
+Mitwirkende) statt der Emulation. Zelda Core zeichnet mit der eigenen PPU, deshalb funktionieren Breitbild, HD,
 Zwischenbilder, Karte, Tracker, Cheats und Mods weiter. Die Dialoge sind deutsch.
 - Zelda 3 braucht seine Spieldaten `zelda3_assets.dat`. Sie werden **einmal** mit den Werkzeugen von Zelda 3 aus der
   ROM erzeugt (siehe `vendor/zelda3/PASTLINK.md`) und danach nur noch gelesen – eine ROM wird dafür später nicht
@@ -167,17 +167,39 @@ Zwischenbilder, Karte, Tracker, Cheats und Mods weiter. Die Dialoge sind deutsch
 - Im RC-Modus ist Run-Ahead aus. Mod-Hooks an Spielroutinen gibt es dort nicht; alles andere der Mod-Schnittstelle
   (Speicher, Grafik, Farben, Bilder, Töne, Tempo) funktioniert.
 
+## Game Boy Advance: The Minish Cap
+Liegt eine GBA-ROM neben der .exe (oder wird über „ROM öffnen…“ geladen), erscheint sie als eigene Karte im
+Hauptmenü – mit dem Titelbild samt Logo aus dem Spiel selbst. Emuliert wird mit **mGBA** (MPL-2.0, `vendor/mgba`).
+Es gibt dieselben Emulator-Funktionen wie bei A Link to the Past, ohne Mods, Recompiled-Modus, Karte und Inventar:
+- **Home / Switch-Home:** Spielstand-Menü mit Vorschaubildern, „Hauptmenü“ und „Einstellungen“ (wie bei ALttP).
+  Spielstände liegen als `.gs1` … neben der ROM, der Speicherstand des Spiels automatisch als `.sav`.
+- **Emulation:** Pause, Einzelbild vor, Reset, Tempo 50–300 %, ×2 und Turbo (halten), Zurückspulen, Auto-Pause.
+- **Grafik:** alle Upscaler (MMPX, xBRZ, Super-xBR, xBR, ScaleFX, Clean HD, Röhren-TV …), HD-Knopf oben rechts,
+  16:9 / 21:9 / Fenster füllen, Bildrate bis 1000, Überblenden, Sättigung, Gamma, ganzzahlige Skalierung.
+- **Y-Taste (neu):** ein drittes Item auf Y, im Spiel als eigenes Feld links neben B – genau im Stil der B/A-Knöpfe.
+  Item wählen wie bei ALttP: Schnellmenü-Taste halten (Tastatur V, Controller Steuerkreuz rechts), mit ←/→ oder
+  L/R wählen, loslassen. Y benutzt das Item (es liegt dafür kurz auf B, danach ist B wieder wie vorher).
+- **Cheats:** fertige Cheats (20/10 Herzen unendlich, 999 Rubine, 999 Muscheln, 99 Bomben, 99 Pfeile, alle Items
+  und 4 Flaschen, alle Schwerttechniken – im Spiel nachgeprüft) und eigene Codes (GameShark, Action Replay,
+  CodeBreaker, „Adresse:Wert“).
+
+**Echtes 16:9:** Bei einem GBA-Spiel zeichnet der Emulator nur 240×160 Pixel; mehr Welt gibt es nur mit einem
+Nachbau des Spiels. Für The Minish Cap gibt es dafür die Dekompilierung *zeldaret/tmc* und darauf aufbauende Ports
+(PC-Port, Switch „Alek's Ultimate NX Edition“ mit echtem 16:9, 3DS-Port) – vergleichbar mit Zelda 3 für ALttP.
+Texturpacks für The Minish Cap gibt es nicht, und mGBA kann keine Texturen ersetzen. Bis dahin: 16:9 mit Rand aus
+dem Spielbild oder gestreckt, dazu die Upscaler.
+
 ## Reines Zelda 3 (zelda3.exe, Knopf „Z3“)
 
-Mit pastlink wird zusätzlich `zelda3.exe` gebaut: Zelda 3 pur, ohne pastlink-Funktionen, in einem eigenen
+Mit Zelda Core wird zusätzlich `zelda3.exe` gebaut: Zelda 3 pur, ohne Zelda Core-Funktionen, in einem eigenen
 Fenster. Oben links stehen die angezeigten Bilder und die Spielbilder pro Sekunde. Der Knopf **Z3** in der
-Menüleiste startet es und hält pastlink an.
+Menüleiste startet es und hält Zelda Core an.
 
 - Steuerung wie bei Zelda 3: Pfeiltasten, X = A, Z/Y = B, S = X, A = Y, C = L, V = R, Enter = Start,
   rechte Umschalttaste = Select. Controller werden erkannt.
 - **Tab** gedrückt halten: Spiellogik ohne Bremse. Dann steigen die Spielbilder pro Sekunde, und das ganze
   Spiel läuft schneller. Deshalb läuft die Spiellogik auch in Zelda 3 fest mit 60 Bildern pro Sekunde.
-- Spielstände des Spiels liegen in `zelda3\saves\sram.dat` neben der .exe, getrennt von pastlink.
+- Spielstände des Spiels liegen in `zelda3\saves\sram.dat` neben der .exe, getrennt von Zelda Core.
 - Ohne eingebaute Spieldaten (öffentlicher Build) sucht `zelda3.exe` die Datei `zelda3_assets.dat` neben sich.
 
 ## Recompiled-Modus (übersetzter Code statt Emulation)
@@ -191,7 +213,7 @@ Der Gewinn ist klein (~7 % pro Bild), weil die meiste Zeit in Grafik und Ton ste
 
 Übersetzten Code einbauen (einmal, oder nach ROM-/Einstellungsänderungen):
 1. Code aufzeichnen (spielt Vorspann, Spielstart und Kopien der Spielstände mit Zufallseingaben):
-   `PASTLINK_ROM=<rom.sfc> PASTLINK_SETTINGS=<pastlink.json> PASTLINK_STATES=<Ordner mit .ss1-Kopien> cargo test --release --target-dir target/test dev_recomp_trace -- --ignored`
+   `PASTLINK_ROM=<rom.sfc> PASTLINK_SETTINGS=<zelda-core.json> PASTLINK_STATES=<Ordner mit .ss1-Kopien> cargo test --release --target-dir target/test dev_recomp_trace -- --ignored`
    → schreibt `recomp/rom.bin` und `recomp/trace.txt` (nicht im Git, enthalten ROM-Daten).
 2. `cargo build --release` übersetzt den aufgezeichneten Code (Meldung „Recompiler: … Blöcke“).
 Ohne `recomp/` baut alles wie bisher, der Schalter ist dann ausgegraut.
@@ -230,7 +252,7 @@ Die Mods der Liste baust du selbst mit `cargo build --release` im Ordner `mods/`
 ## Öffentlicher Build und Release
 Releases auf GitHub enthalten **keine Spieldaten**: Sie werden mit `PASTLINK_PUBLIC=1` gebaut, ohne eingebaute ROM,
 ohne übersetzten ROM-Code und ohne Zelda-3-Daten. Du brauchst deine eigene ROM. Für den RC-Modus legst du deine
-selbst erzeugte `zelda3_assets.dat` neben `pastlink.exe`.
+selbst erzeugte `zelda3_assets.dat` neben `zelda-core.exe`.
 
 ```powershell
 $env:PASTLINK_PUBLIC = "1"; cargo build --release --target-dir target/public

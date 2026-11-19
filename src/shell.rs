@@ -111,7 +111,13 @@ pub enum TextField {
     CodeInput,
     CodeDesc,
     MarkerLabel,
+    GbaCheatName,
+    GbaCheatCode,
 }
+
+// Menüs und Cheat-Fenster im GBA-Modus
+#[path = "gba/menus.rs"]
+mod gba_menus;
 
 impl TextField {
     fn value(self, a: &mut Core) -> &mut String {
@@ -120,6 +126,8 @@ impl TextField {
             TextField::CodeInput => &mut a.code_input,
             TextField::CodeDesc => &mut a.code_desc,
             TextField::MarkerLabel => &mut a.marker_label,
+            TextField::GbaCheatName => &mut a.gba.cheat_name,
+            TextField::GbaCheatCode => &mut a.gba.cheat_code,
         }
     }
 }
@@ -374,7 +382,8 @@ impl Render for Root {
         self.ui.window_size = (ww, wh);
         self.continue_drag();
         // Menüleiste liegt über dem Spiel und erscheint nur, wenn die Maus oben ist (oder ein Menü offen ist)
-        let bar = self.app.show_bar;
+        // Menüleiste nur im Spiel (nicht im Hauptmenü)
+        let bar = self.app.show_bar && (self.app.game.is_some() || self.app.gba.active());
         let zone = MENU_H + if self.ui.menu_t > 0.5 { 10.0 } else { 0.0 };
         let mouse_top = {
             let c = self.gctx.collector();
@@ -1030,6 +1039,7 @@ impl Root {
         let en = self.app.s.ui_en;
         let t = move |d: &'static str, e: &'static str| tr(en, d, e);
         let has = self.app.game.is_some();
+        let gba = self.app.gba.active();
         let titles: [(&str, bool); MENUS] = [
             (t("Datei", "File"), true),
             (t("Spielstand", "Save"), true),
@@ -1037,9 +1047,9 @@ impl Root {
             (t("Grafik", "Video"), true),
             ("Audio", true),
             (t("Steuerung", "Controls"), true),
-            (t("Spiel", "Game"), has),
-            ("Cheats", has),
-            ("Mods", true),
+            (t("Spiel", "Game"), has && !gba),
+            ("Cheats", has || gba),
+            ("Mods", !gba),
         ];
         let mut bar = row().gap(px(1.0)).px(px(6.0)).h_full();
         for (i, (name, show)) in titles.iter().enumerate() {
@@ -1132,40 +1142,44 @@ impl Root {
         }
         let paused = self.app.paused;
         let mute = self.app.s.mute;
-        // reines Zelda 3 als eigenes Programm (zelda3.exe neben pastlink.exe), mit FPS-Anzeige – zum Vergleich
-        right = right.child(
-            toggle_button("z3exe", "Z3", false, col::text(), cx, |r| {
-                let exe = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("zelda3.exe")));
-                match exe.filter(|e| e.is_file()).map(|e| std::process::Command::new(&e).current_dir(e.parent().unwrap()).spawn()) {
-                    Some(Ok(_)) => {
-                        // pastlink anhalten, damit nicht zwei Spiele gleichzeitig laufen und Ton ausgeben
-                        r.app.paused = true;
+        if !gba {
+            // reines Zelda 3 als eigenes Programm (zelda3.exe neben pastlink.exe), mit FPS-Anzeige – zum Vergleich
+            right = right.child(
+                toggle_button("z3exe", "Z3", false, col::text(), cx, |r| {
+                    let exe = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("zelda3.exe")));
+                    match exe.filter(|e| e.is_file()).map(|e| std::process::Command::new(&e).current_dir(e.parent().unwrap()).spawn()) {
+                        Some(Ok(_)) => {
+                            // pastlink anhalten, damit nicht zwei Spiele gleichzeitig laufen und Ton ausgeben
+                            r.app.paused = true;
+                        }
+                        _ => {
+                            let m = r.app.t("zelda3.exe nicht gefunden (wird mit Zelda Core gebaut, wenn Zelda 3 eingebaut ist).", "zelda3.exe not found (built with Zelda Core when Zelda 3 is included).");
+                            r.app.msg(m);
+                        }
                     }
-                    _ => {
-                        let m = r.app.t("zelda3.exe nicht gefunden (wird mit pastlink gebaut, wenn Zelda 3 eingebaut ist).", "zelda3.exe not found (built with pastlink when Zelda 3 is included).");
+                })
+                .font_weight(FontWeight::BOLD)
+                .tooltip(tip(t("Reines Zelda 3 als eigenes Programm starten (ohne Zelda-Core-Funktionen, mit FPS-Anzeige). Zelda Core wird dabei angehalten.", "Start plain Zelda 3 as its own program (without Zelda Core features, with FPS counter). Zelda Core is paused.").to_string())),
+            );
+            // Recompiled-Modus (übersetzter Code, Mods) / Emulation
+            let rc = self.app.s.recompiled && crate::recomp::Table::available();
+            right = right.child(
+                toggle_button("rc", if rc { "RC" } else { "EMU" }, rc, if rc { col::green() } else { col::dim() }, cx, |r| {
+                    if crate::recomp::Table::available() {
+                        r.app.s.recompiled = !r.app.s.recompiled;
+                    } else {
+                        let m = r.app.t("Recompiled-Modus ist nicht eingebaut (siehe README).", "Recompiled mode is not built in (see README).");
                         r.app.msg(m);
                     }
-                }
-            })
-            .font_weight(FontWeight::BOLD)
-            .tooltip(tip(t("Reines Zelda 3 als eigenes Programm starten (ohne pastlink-Funktionen, mit FPS-Anzeige). pastlink wird dabei angehalten.", "Start plain Zelda 3 as its own program (without pastlink features, with FPS counter). pastlink is paused.").to_string())),
-        );
-        // Recompiled-Modus (übersetzter Code, Mods) / Emulation
-        let rc = self.app.s.recompiled && crate::recomp::Table::available();
-        right = right.child(
-            toggle_button("rc", if rc { "RC" } else { "EMU" }, rc, if rc { col::green() } else { col::dim() }, cx, |r| {
-                if crate::recomp::Table::available() {
-                    r.app.s.recompiled = !r.app.s.recompiled;
-                } else {
-                    let m = r.app.t("Recompiled-Modus ist nicht eingebaut (siehe README).", "Recompiled mode is not built in (see README).");
-                    r.app.msg(m);
-                }
-            })
-            .font_weight(FontWeight::BOLD)
-            .tooltip(tip(t("Recompiled-Modus (RC): übersetzter Spielcode ohne ROM-Datei, Mods aktiv. EMU: normale Emulation. Spielstände gelten in beiden.", "Recompiled mode (RC): translated game code without ROM file, mods active. EMU: normal emulation. Save states work in both.").to_string())),
-        );
+                })
+                .font_weight(FontWeight::BOLD)
+                .tooltip(tip(t("Recompiled-Modus (RC): übersetzter Spielcode ohne ROM-Datei, Mods aktiv. EMU: normale Emulation. Spielstände gelten in beiden.", "Recompiled mode (RC): translated game code without ROM file, mods active. EMU: normal emulation. Save states work in both.").to_string())),
+            );
+        }
+        {
+            right = right.child(toggle_button("hd", if hd { "HD" } else { "SD" }, hd, if hd { col::gold() } else { col::dim() }, cx, |r| r.app.toggle_hd()).font_weight(FontWeight::BOLD).tooltip(tip(t("HD an/aus", "HD on/off").to_string())));
+        }
         right = right
-            .child(toggle_button("hd", if hd { "HD" } else { "SD" }, hd, if hd { col::gold() } else { col::dim() }, cx, |r| r.app.toggle_hd()).font_weight(FontWeight::BOLD).tooltip(tip(t("HD an/aus", "HD on/off").to_string())))
             .child(toggle_button("pause", "", paused, if paused { col::gold() } else { col::text() }, cx, |r| r.app.paused = !r.app.paused).child(icon(if paused { "\u{E768}" } else { "\u{E769}" })).tooltip(tip(format!("{}  [{}]", t("Pause", "Pause"), self.hk("pause")))))
             .child(toggle_button("mute", "", mute, if mute { col::red() } else { col::text() }, cx, |r| r.app.s.mute = !r.app.s.mute).child(icon(if mute { "\u{E74F}" } else { "\u{E767}" })).tooltip(tip(format!("{}  [{}]", t("Stumm", "Mute"), self.hk("mute")))));
         bar = bar.child(right);
@@ -1225,6 +1239,9 @@ impl Root {
     }
 
     fn menu_items(&mut self, i: usize, cx: &mut Context<Root>) -> Vec<AnyElement> {
+        if self.app.gba.active() {
+            return self.gba_menu_items(i, cx);
+        }
         let en = self.app.s.ui_en;
         let t = move |d: &'static str, e: &'static str| tr(en, d, e);
         let has = self.app.game.is_some();
@@ -1505,7 +1522,7 @@ impl Root {
     /// Fenster im Stil der Spielmenüs: schwarz, goldener Rahmen, Titel in der Spielschrift
     fn game_window(&self, id: &'static str, title: &str, width: f32, max_h: f32, body: Vec<AnyElement>, cx: &mut Context<Root>, close: impl Fn(&mut Root) + 'static) -> AnyElement {
         let (ww, wh) = self.ui.window_size;
-        let order = ["rando", "cheats", "controls", "hotkeys", "help", "unknown", "marker", "mods"].iter().position(|x| *x == id).unwrap_or(0) as f32;
+        let order = ["rando", "cheats", "controls", "hotkeys", "help", "unknown", "marker", "mods", "gbacheats"].iter().position(|x| *x == id).unwrap_or(0) as f32;
         let pos = self.ui.win_pos.get(id).copied().unwrap_or_else(|| point(px(((ww - width) / 2.0 + order * 24.0 - 48.0).max(8.0)), px((MENU_H + 24.0 + order * 18.0).min(wh * 0.3))));
         let max_body = (wh - f32::from(pos.y) - 90.0).clamp(160.0, max_h);
         let title_bar = div()
@@ -1577,6 +1594,12 @@ impl Root {
         if self.app.win_cheats {
             let body = self.cheats_ui(cx);
             v.push(self.game_window("cheats", "Cheats", 620.0, 660.0, body, cx, |r| r.app.win_cheats = false));
+        }
+        if self.app.gba.win_cheats && self.app.gba.active() {
+            let body = self.gba_cheats_ui(cx);
+            v.push(self.game_window("gbacheats", t("Cheat-Liste", "Cheat list"), 560.0, 640.0, body, cx, |r| r.app.gba.win_cheats = false));
+        } else {
+            self.app.gba.win_cheats = false;
         }
         if self.app.win_mods {
             let body = self.mods_ui(cx);

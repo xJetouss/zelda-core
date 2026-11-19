@@ -34,6 +34,8 @@ pub enum Filter {
 impl Filter {
     /// Bildmodi im Menü (die übrigen Filter werden nur noch intern genutzt, z. B. für die Weltkarte)
     pub const ALL: [Filter; 5] = [Filter::Pixel, Filter::HdSoft, Filter::HdSuper, Filter::HdMax, Filter::HdSharp];
+    /// GBA: alle Upscaler zur Auswahl (Pixel-Art-Vergrößerung MMPX, xBR, xBRZ, Super-xBR, ScaleFX …)
+    pub const GBA_ALL: [Filter; 12] = [Filter::Pixel, Filter::Smooth, Filter::HdSoft, Filter::HdSuper, Filter::HdUltra, Filter::HdClean, Filter::Hd, Filter::HdCrisp, Filter::HdScan, Filter::HdMax, Filter::HdSharp, Filter::Crt];
     /// alte Einstellung auf einen der fünf Bildmodi abbilden
     pub fn menu_mode(self) -> Filter {
         match self {

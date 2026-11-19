@@ -48,7 +48,9 @@ impl App {
             self.area_aspect = area.width() / area.height().max(1.0);
             let painter = ctx.painter().with_clip_rect(area);
             painter.rect_filled(area, 0.0, Color32::BLACK);
-            if self.game.is_some() {
+            if self.gba.active() {
+                self.gba_view(&painter, area, ctx);
+            } else if self.game.is_some() {
                 let r = self.game_rect(area, ctx);
                 self.game_px = r.width() / self.view_w as f32;
                 self.game_area = area;
@@ -157,7 +159,19 @@ impl App {
             let sel = self.lib_sel == k;
             self.gbox_round(painter, card, if sel { crate::inventory::GOLDF } else { Color32::from_gray(90) });
             let art = gfx::Rect::from_min_size(card.min + gfx::vec2(cw * 0.12, ch * 0.1), gfx::vec2(cw * 0.76, cw * 0.66));
-            if let Some(p) = lib.get(k) {
+            if let Some(p) = lib.get(k).filter(|p| crate::gba::is_gba(p)) {
+                // GBA-Spiel: Titelbild mit Logo (aus dem Spiel selbst, beim ersten Mal kurz gestartet)
+                let side_w = art.width();
+                let lr = gfx::Rect::from_center_size(art.center(), gfx::vec2(side_w, side_w * 2.0 / 3.0));
+                if let Some(t) = self.gba_card(p, ctx) {
+                    painter.image(t.id(), lr, gfx::Rect::from_min_max(gfx::pos2(0.0, 0.0), gfx::pos2(1.0, 1.0)), if sel { Color32::WHITE } else { Color32::from_gray(150) });
+                } else {
+                    painter.rect_filled(lr, 6.0, Color32::from_rgb(20, 60, 30));
+                }
+                let title = crate::gba::display_name(p).to_uppercase();
+                painter.text(gfx::pos2(card.center().x, art.bottom() + ch * 0.1), gfx::Align2::CENTER_CENTER, title, game((cw * 0.085).clamp(12.0, 24.0)), if sel { Color32::WHITE } else { Color32::from_gray(160) });
+                painter.text(gfx::pos2(card.center().x, art.bottom() + ch * 0.2), gfx::Align2::CENTER_CENTER, "GAME BOY ADVANCE", gfx::FontId::proportional((cw * 0.045).clamp(10.0, 14.0)), Color32::from_gray(120));
+            } else if let Some(p) = lib.get(k) {
                 // Symbol des Spiels: Logo von A Link to the Past
                 let logo = self.alttp_logo.get_or_insert_with(|| {
                     // Bild aus dem Build (eigene Builds: Logo aus assets/, öffentliche Builds: Triforce)
@@ -271,7 +285,7 @@ impl App {
 
     /// Spielstände: Popup in der Bildmitte im Stil der Spielmenüs, nur Controller/Tastatur.
     pub(crate) fn states_overlay(&mut self, ctx: &gfx::Context) {
-        if !self.win_states || self.game.is_none() {
+        if !self.win_states || (self.game.is_none() && !self.gba.active()) {
             // Menü zu: auch die Einstellungsseite schließen (beim nächsten Öffnen wieder die Spielstände)
             self.win_pad_settings = false;
             return;

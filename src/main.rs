@@ -24,6 +24,7 @@ mod perf;
 mod recomp;
 mod mods;
 mod z3;
+mod gba;
 mod tracker;
 mod world;
 mod ui;
@@ -120,7 +121,7 @@ fn main() {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1000.0), px(760.0)), cx))),
             titlebar: Some(TitlebarOptions { title: Some("Zelda Core".into()), ..Default::default() }),
             window_min_size: Some(size(px(480.0), px(360.0))),
-            app_id: Some("pastlink".into()),
+            app_id: Some("zelda-core".into()),
             ..Default::default()
         };
         let res = cx.open_window(opts, move |window, cx| {

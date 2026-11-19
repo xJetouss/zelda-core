@@ -1,9 +1,9 @@
-# Zelda 3 – eingebunden in pastlink
+# Zelda 3 – eingebunden in Zelda Core
 
 Quelle: https://github.com/snesrev/zelda3 (Commit 45a149d8b4bb8098f53d1009f76e76e7d8b79bbf), MIT-Lizenz (siehe `LICENSE.txt`).
 Zelda 3 ist eine Neuimplementierung der Spiellogik von „A Link to the Past“ in C, von snesrev und Mitwirkenden.
-pastlink nutzt sie im RC-Modus (Knopf „RC“) als Spiellogik. Grafik, Breitbild, HD, Karte, Tracker, Cheats und Mods
-kommen weiter von pastlink.
+Zelda Core nutzt sie im RC-Modus (Knopf „RC“) als Spiellogik. Grafik, Breitbild, HD, Karte, Tracker, Cheats und Mods
+kommen weiter von Zelda Core.
 
 ## Spieldaten (nicht im Git, nicht weitergeben)
 
@@ -16,19 +16,19 @@ kommen weiter von pastlink.
     .venv\Scripts\python assets/restool.py --extract-from-rom --languages=de -r zelda3.sfc
 
 `cargo build` baut danach den C-Kern (`build.rs`, cc-Crate) und bettet die Spieldaten in die .exe ein. Fehlt
-`zelda3_assets.dat`, nutzt der RC-Modus stattdessen den eigenen Recompiler von pastlink.
+`zelda3_assets.dat`, nutzt der RC-Modus stattdessen den eigenen Recompiler von Zelda Core.
 
 ## Änderungen an Zelda 3
 
-- `src/zelda_rtl.c`: `g_pastlink_ppu_hook` (meldet jeden PPU-Schreibzugriff an pastlink) und
-  `ZeldaPastlinkLines` (wie `ZeldaDrawPpuFrame`, aber zeichnet nicht selbst, sondern ruft je Zeile pastlink auf).
-- Nicht gebaut: `main.c`, `config.c`, `opengl.c`, `glsl_shader.c` (SDL/Fenster). Ersatz: `src/z3/glue.c` in pastlink.
+- `src/zelda_rtl.c`: `g_Zelda Core_ppu_hook` (meldet jeden PPU-Schreibzugriff an Zelda Core) und
+  `ZeldaZelda CoreLines` (wie `ZeldaDrawPpuFrame`, aber zeichnet nicht selbst, sondern ruft je Zeile Zelda Core auf).
+- Nicht gebaut: `main.c`, `config.c`, `opengl.c`, `glsl_shader.c` (SDL/Fenster). Ersatz: `src/z3/glue.c` in Zelda Core.
 
-## Ergänzungen (pastlink 0.3)
+## Ergänzungen (Zelda Core 0.3)
 
 - `src/z3/glue.c`: `pl_z3_read_sram` (eigenständige `zelda3.exe`, Spielstände in `zelda3\saves`) und
   `pl_z3_set_map16` (Map16-Tabelle aus der geladenen ROM; die deutsche Fassung weicht in 853 Einträgen ab).
-- pastlink setzt vor jedem Bild die PPU-Register, die Zelda 3 nie schreibt (OBSEL, M7SEL, WBGLOG, WOBJLOG, SETINI),
+- Zelda Core setzt vor jedem Bild die PPU-Register, die Zelda 3 nie schreibt (OBSEL, M7SEL, WBGLOG, WOBJLOG, SETINI),
   auf die Startwerte von Zelda 3. Startet man direkt im RC-Modus, beginnt Zelda 3 von vorn, statt den leeren
   Ton-Speicher der Emulation zu übernehmen.
 - Öffentliche Builds (`PASTLINK_PUBLIC=1`) bauen den Kern ohne Spieldaten ein; `zelda3_assets.dat` wird dann zur

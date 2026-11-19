@@ -1,10 +1,10 @@
-//! Beispiel-Mod für pastlink (läuft im Recompiled-Modus „RC“):
+//! Beispiel-Mod für Zelda Core (läuft im Recompiled-Modus „RC“):
 //! - zeigt oben rechts, wie oft das Spiel seinen NMI-Handler betreten hat (Hook-Beispiel),
 //! - im normalen Spiel alle 2 Sekunden eine Rubine,
 //! - L+R gedrückt: Magie füllt sich und das Spiel läuft in Zeitlupe.
 //!
 //! Bauen: `cargo build --release`, dann `target/release/mein_mod.dll` in den Ordner `mods` neben
-//! `pastlink.exe` kopieren, im Menü „Mods“ → „Mods neu laden“ und die Mod einschalten.
+//! `zelda-core.exe` kopieren, im Menü „Mods“ → „Mods neu laden“ und die Mod einschalten.
 
 mod api;
 
@@ -57,7 +57,7 @@ static INFO: ModInfo = ModInfo {
     on_hook: Some(on_hook),
 };
 
-/// Einstiegspunkt, den pastlink sucht
+/// Einstiegspunkt, den Zelda Core sucht
 #[no_mangle]
 pub extern "C" fn pastlink_mod() -> *const ModInfo {
     &INFO

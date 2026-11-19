@@ -29,7 +29,8 @@ extern "C" fn post(api: *const Api) {
         // nachts bläulich, in der Dämmerung rötlich
         let dusk = (1.0 - (dark - 0.5).abs() * 2.0).max(0.0);
         let r = (0x10 as f32 + dusk * 0x40 as f32) as u32;
-        g.rect(-64, 0, 384, 224, r << 24 | 0x10 << 16 | 0x40 << 8 | a);
+        // weit über den Rand hinaus: Breitbild und „Fenster füllen“ zeigen mehr als 256 Pixel (das Bild wird beschnitten)
+        g.rect(-2048, -64, 4352, 352, r << 24 | 0x10 << 16 | 0x40 << 8 | a);
     }
     let hours = (t * 24.0) as u32;
     let mins = ((t * 24.0).fract() * 60.0) as u32;

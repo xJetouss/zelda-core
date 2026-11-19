@@ -239,7 +239,7 @@ mod run {
 
     unsafe fn window() -> HWND {
         let hinst = GetModuleHandleW(std::ptr::null());
-        let class = wide("pastlink_zelda3");
+        let class = wide("zelda_core_zelda3");
         let wc = WNDCLASSW {
             style: CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc: Some(wndproc),
