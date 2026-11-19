@@ -1467,83 +1467,15 @@ impl Root {
                 v.push(self.item("cheats_win", t("Alle Cheats, Items & Codes…", "All cheats, items & codes…"), self.hk("win_cheats"), true, false, cx, |r| r.app.win_cheats = true));
             }
             8 => {
-                // Mods: an-/ausschalten, DLL-Mods nachladen, Vorlage für eigene Mods
+                // Mods: Liste im eigenen Fenster (installieren, an/aus), dazu Ordner und Vorlage
                 v.push(Self::heading(t("Mods (in Rust geschrieben)", "Mods (written in Rust)")));
-                if !self.app.s.recompiled {
-                    v.push(Self::note(t("Mods laufen nur im Recompiled-Modus (Knopf „RC“ oben rechts).", "Mods only run in recompiled mode (\"RC\" button top right).")));
-                }
-                let ids = self.app.mods.entries(en);
-                for (id, name, desc) in ids {
-                    let on = s.mods_on.contains(&id);
-                    let id2 = id.clone();
-                    v.push(
-                        check(format!("mod-{id}"), name, on, true, cx, move |r| {
-                            if let Some(i) = r.app.s.mods_on.iter().position(|x| *x == id2) {
-                                r.app.s.mods_on.remove(i);
-                            } else {
-                                r.app.s.mods_on.push(id2.clone());
-                            }
-                        })
-                        .tooltip(tip(desc))
-                        .into_any_element(),
-                    );
-                }
-                for e in self.app.mods.errors.clone() {
-                    v.push(Self::note(e));
-                }
-                if self.app.mods.entries(en).is_empty() {
-                    v.push(Self::note(t("Noch keine Mods installiert – unten im Mod-Shop gibt es alle kostenlos.", "No mods installed yet – get them all for free in the mod shop below.")));
-                }
-                // Mod-Shop: alle Mods kostenlos von GitHub
-                v.push(sep().into_any_element());
-                v.push(Self::heading(t("Mod-Shop (alles kostenlos)", "Mod shop (everything free)")));
-                let shop = self.app.mods.shop.clone();
-                match shop.status() {
-                    crate::mods::shop::Status::Idle => {
-                        v.push(self.item("shop_open", t("Shop öffnen (Liste von GitHub laden)", "Open shop (load list from GitHub)"), String::new(), true, true, cx, |r| r.app.mods.shop.refresh()));
+                let n_on = s.mods_on.len();
+                v.push(self.item("mods_list", t("Mod-Liste…", "Mod list…"), if n_on > 0 { format!("{n_on} {}", t("an", "on")) } else { String::new() }, true, true, cx, |r| {
+                    r.app.win_mods = true;
+                    if r.app.mods.shop.status() == crate::mods::shop::Status::Idle {
+                        r.app.mods.shop.refresh();
                     }
-                    crate::mods::shop::Status::Loading => v.push(Self::note(t("Lade die Mod-Liste …", "Loading the mod list …"))),
-                    crate::mods::shop::Status::Error(e) => {
-                        v.push(Self::note(format!("{} {e}", t("Shop nicht erreichbar:", "Shop not reachable:"))));
-                        v.push(self.item("shop_retry", t("Nochmal versuchen", "Try again"), String::new(), true, false, cx, |r| r.app.mods.shop.refresh()));
-                    }
-                    crate::mods::shop::Status::Ready => {
-                        let items = shop.items();
-                        let missing: Vec<crate::mods::shop::Item> = items.iter().filter(|it| matches!(shop.have(it), crate::mods::shop::Have::No | crate::mods::shop::Have::Update)).cloned().collect();
-                        if !missing.is_empty() {
-                            v.push(self.item("shop_all", format!("{} ({})", t("Alle holen", "Get all"), missing.len()), t("kostenlos", "free").to_string(), true, true, cx, move |r| {
-                                for it in &missing {
-                                    let loaded = r.app.mods.is_loaded(&it.file);
-                                    r.app.mods.shop.install(it, loaded);
-                                }
-                            }));
-                        }
-                        for it in items {
-                            use crate::mods::shop::Have;
-                            let have = shop.have(&it);
-                            let name = if en && !it.name_en.is_empty() { it.name_en.clone() } else { it.name.clone() };
-                            let desc = if en && !it.desc_en.is_empty() { it.desc_en.clone() } else { it.desc.clone() };
-                            let state = match have {
-                                Have::No => t("kostenlos holen", "get for free"),
-                                Have::Busy => t("lädt …", "loading …"),
-                                Have::Installed => t("installiert ✓", "installed ✓"),
-                                Have::Update => t("Update holen", "get update"),
-                                Have::Restart => t("nach Neustart", "after restart"),
-                            };
-                            let label = format!("{name}  v{}", it.version);
-                            let it2 = it.clone();
-                            let el = self.item(&format!("shop_{}", it.id), label, state.to_string(), matches!(have, Have::No | Have::Update), false, cx, move |r| {
-                                let loaded = r.app.mods.is_loaded(&it2.file);
-                                r.app.mods.shop.install(&it2, loaded);
-                            });
-                            v.push(div().id(eid(format!("shop-tip-{}", it.id))).child(el).tooltip(tip(desc)).into_any_element());
-                            if let Some(e) = shop.error_of(&it.id) {
-                                v.push(Self::note(format!("{name}: {e}")));
-                            }
-                        }
-                        v.push(self.item("shop_refresh", t("Liste aktualisieren", "Refresh list"), String::new(), true, false, cx, |r| r.app.mods.shop.refresh()));
-                    }
-                }
+                }));
                 v.push(sep().into_any_element());
                 v.push(self.item("mods_reload", t("Mods neu laden", "Reload mods"), String::new(), true, false, cx, |r| r.app.mods.load_dlls()));
                 v.push(self.item("mods_dir", t("Mod-Ordner öffnen", "Open mods folder"), String::new(), true, false, cx, |_| {
@@ -1573,7 +1505,7 @@ impl Root {
     /// Fenster im Stil der Spielmenüs: schwarz, goldener Rahmen, Titel in der Spielschrift
     fn game_window(&self, id: &'static str, title: &str, width: f32, max_h: f32, body: Vec<AnyElement>, cx: &mut Context<Root>, close: impl Fn(&mut Root) + 'static) -> AnyElement {
         let (ww, wh) = self.ui.window_size;
-        let order = ["rando", "cheats", "controls", "hotkeys", "help", "unknown", "marker"].iter().position(|x| *x == id).unwrap_or(0) as f32;
+        let order = ["rando", "cheats", "controls", "hotkeys", "help", "unknown", "marker", "mods"].iter().position(|x| *x == id).unwrap_or(0) as f32;
         let pos = self.ui.win_pos.get(id).copied().unwrap_or_else(|| point(px(((ww - width) / 2.0 + order * 24.0 - 48.0).max(8.0)), px((MENU_H + 24.0 + order * 18.0).min(wh * 0.3))));
         let max_body = (wh - f32::from(pos.y) - 90.0).clamp(160.0, max_h);
         let title_bar = div()
@@ -1645,6 +1577,10 @@ impl Root {
         if self.app.win_cheats {
             let body = self.cheats_ui(cx);
             v.push(self.game_window("cheats", "Cheats", 620.0, 660.0, body, cx, |r| r.app.win_cheats = false));
+        }
+        if self.app.win_mods {
+            let body = self.mods_ui(cx);
+            v.push(self.game_window("mods", t("Mod-Liste", "Mod list"), 600.0, 680.0, body, cx, |r| r.app.win_mods = false));
         }
         if self.app.win_controls {
             let body = self.controls_ui(cx);
@@ -1819,6 +1755,108 @@ impl Root {
     }
 
     // ------------------------------------------------------------ Cheats
+
+    /// Fenster „Mod-Liste“: alle Mods aus dem GitHub-Release „mods“ und eigene DLLs – holen, aktualisieren, an/aus
+    fn mods_ui(&mut self, cx: &mut Context<Root>) -> Vec<AnyElement> {
+        use crate::mods::shop::{Have, Status};
+        let en = self.app.s.ui_en;
+        let t = move |d: &'static str, e: &'static str| tr(en, d, e);
+        let mut v = Vec::new();
+        if !self.app.s.recompiled {
+            v.push(small(t("Mods laufen nur im RC-Modus (Knopf „RC“ oben rechts).", "Mods only run in RC mode (\"RC\" button top right).")).into_any_element());
+        }
+        let shop = self.app.mods.shop.clone();
+        let installed = self.app.mods.entries(en);
+        let on_ids = self.app.s.mods_on.clone();
+        // Zeile: Name + Beschreibung, rechts Schalter (installiert) und Knopf (holen/Update)
+        let mod_row = |id: String, name: String, desc: String, have: Option<Have>, file: Option<crate::mods::shop::Item>, cx: &mut Context<Root>| {
+            let key = format!("dll:{}", file.as_ref().map(|f| f.file.clone()).unwrap_or_default());
+            let key = if file.is_some() { key } else { id.clone() };
+            let is_inst = installed.iter().any(|e| e.0 == key);
+            let on = on_ids.contains(&key);
+            let text = div().flex().flex_col().gap(px(2.0)).child(strong(name)).child(small(desc));
+            let k2 = key.clone();
+            let sw = switch(format!("modsw-{id}"), text, on, is_inst, cx, move |r| {
+                if let Some(i) = r.app.s.mods_on.iter().position(|x| *x == k2) {
+                    r.app.s.mods_on.remove(i);
+                } else {
+                    r.app.s.mods_on.push(k2.clone());
+                }
+            });
+            let mut r = row().gap(px(10.0)).child(div().flex_1().min_w(px(0.0)).child(sw));
+            if let (Some(h), Some(it)) = (have, file) {
+                let (txt, active) = match h {
+                    Have::No => (t("Holen", "Get"), true),
+                    Have::Update => (t("Update", "Update"), true),
+                    Have::Busy => (t("lädt …", "loading …"), false),
+                    Have::Restart => (t("nach Neustart", "after restart"), false),
+                    Have::Installed => ("", false),
+                };
+                if !txt.is_empty() {
+                    r = r.child(button(format!("modget-{id}"), txt, active, cx, move |r| {
+                        let loaded = r.app.mods.is_loaded(&it.file);
+                        r.app.mods.shop.install(&it, loaded);
+                    }));
+                }
+            }
+            r.into_any_element()
+        };
+        let mut rows = Vec::new();
+        match shop.status() {
+            Status::Idle => {
+                shop.refresh();
+                rows.push(small(t("Lade die Mod-Liste …", "Loading the mod list …")).into_any_element());
+            }
+            Status::Loading => rows.push(small(t("Lade die Mod-Liste …", "Loading the mod list …")).into_any_element()),
+            Status::Error(e) => {
+                rows.push(small(format!("{} {e}", t("Mod-Liste nicht erreichbar:", "Mod list not reachable:"))).into_any_element());
+                rows.push(row().child(button("mods-retry", t("Nochmal versuchen", "Try again"), true, cx, |r| r.app.mods.shop.refresh())).into_any_element());
+            }
+            Status::Ready => {
+                for it in shop.items() {
+                    let have = shop.have(&it);
+                    let name = if en && !it.name_en.is_empty() { it.name_en.clone() } else { it.name.clone() };
+                    let desc = if en && !it.desc_en.is_empty() { it.desc_en.clone() } else { it.desc.clone() };
+                    let id = it.id.clone();
+                    let err = shop.error_of(&it.id);
+                    rows.push(mod_row(id, format!("{name}  v{}", it.version), desc, Some(have), Some(it), cx));
+                    if let Some(e) = err {
+                        rows.push(small(e).into_any_element());
+                    }
+                }
+            }
+        }
+        v.push(section(t("Mods", "Mods"), rows).into_any_element());
+        // eigene DLLs, die nicht in der Liste stehen
+        let listed: Vec<String> = shop.items().iter().map(|i| format!("dll:{}", i.file)).collect();
+        let own: Vec<(String, String, String)> = installed.iter().filter(|e| !listed.contains(&e.0)).cloned().collect();
+        if !own.is_empty() && shop.status() == Status::Ready {
+            let mut rows = Vec::new();
+            for (id, name, desc) in own {
+                rows.push(mod_row(id.clone(), name, desc, None, None, cx));
+            }
+            v.push(section(t("Eigene Mods", "Own mods"), rows).into_any_element());
+        }
+        for e in self.app.mods.errors.clone() {
+            v.push(small(e).into_any_element());
+        }
+        // Knöpfe unten
+        let missing: Vec<crate::mods::shop::Item> = shop.items().into_iter().filter(|it| matches!(shop.have(it), Have::No | Have::Update)).collect();
+        let mut bar = row().pt(px(10.0)).gap(px(8.0));
+        if !missing.is_empty() {
+            let n = missing.len();
+            bar = bar.child(button("mods-all", format!("{} ({n})", t("Alle holen", "Get all")), true, cx, move |r| {
+                for it in &missing {
+                    let loaded = r.app.mods.is_loaded(&it.file);
+                    r.app.mods.shop.install(it, loaded);
+                }
+            }));
+        }
+        bar = bar.child(button("mods-refresh", t("Liste aktualisieren", "Refresh list"), shop.status() != Status::Loading, cx, |r| r.app.mods.shop.refresh()));
+        bar = bar.child(button("mods-reload", t("Mods neu laden", "Reload mods"), true, cx, |r| r.app.mods.load_dlls()));
+        v.push(bar.into_any_element());
+        v
+    }
 
     fn cheats_ui(&mut self, cx: &mut Context<Root>) -> Vec<AnyElement> {
         let en = self.app.s.ui_en;

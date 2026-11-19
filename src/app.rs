@@ -428,6 +428,8 @@ pub struct App {
     pub(crate) win_map: bool,
     pub(crate) win_rando: bool,
     pub(crate) win_cheats: bool,
+    /// Fenster „Mod-Liste“
+    pub(crate) win_mods: bool,
     pub(crate) win_controls: bool,
     pub(crate) win_hotkeys: bool,
     pub(crate) show_bar: bool,
@@ -662,6 +664,8 @@ impl App {
             win_map: false,
             win_rando: false,
             win_cheats: false,
+            // Entwicklung: Fenster gleich beim Start öffnen (PASTLINK_OPEN=mods)
+            win_mods: std::env::var("PASTLINK_OPEN").is_ok_and(|v| v == "mods"),
             win_controls: false,
             win_hotkeys: false,
             show_bar: true,
@@ -2213,7 +2217,7 @@ impl App {
     }
 
     pub(crate) fn popup_open(&self) -> bool {
-        self.win_states || self.win_rando || self.win_cheats || self.win_controls || self.win_hotkeys
+        self.win_states || self.win_rando || self.win_cheats || self.win_controls || self.win_hotkeys || self.win_mods
     }
 
     fn run_emulation(&mut self, pad: u16, turbo: bool, double: bool, rewind: bool) {

@@ -1,4 +1,4 @@
-//! Mod-Shop: alle Mods kostenlos zum Herunterladen. Die Mods stecken nicht in der App, sondern liegen als
+//! Mod-Liste: alle Mods zum Herunterladen. Die Mods stecken nicht in der App, sondern liegen als
 //! DLLs im GitHub-Release „mods“ des Projekts (`index.json` + DLLs). Heruntergeladen wird mit dem in Windows
 //! eingebauten `curl.exe` im Hintergrund; installiert wird in den Mod-Ordner neben der .exe.
 

@@ -1,5 +1,5 @@
 # Mods für pastlink (jede Mod eine DLL). Bauen: `cargo build --release` in diesem Ordner,
-# die DLLs liegen dann in `target/release`. Veröffentlicht werden sie im GitHub-Release „mods“ (Mod-Shop).
+# die DLLs liegen dann in `target/release`. Veröffentlicht werden sie im GitHub-Release „mods“ (Mod-Liste in der App).
 [workspace]
 resolver = "2"
 members = [

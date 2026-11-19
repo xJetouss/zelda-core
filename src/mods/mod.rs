@@ -4,7 +4,7 @@
 //! sich per Hook vor Spielroutinen hängen (Register ändern, Routine überspringen), über dem Bild zeichnen
 //! (Rechtecke, Text, Bilder), Grafik und Farben dauerhaft austauschen, Töne abspielen und das Spieltempo ändern.
 //! - Mods sind DLLs im Ordner `mods` neben der .exe (C-ABI aus `assets/mod_template/src/api.rs`, Vorlage über
-//!   „Mods“ → „Mod-Vorlage exportieren…“). In der App selbst steckt keine Mod: Sie kommen aus dem Mod-Shop
+//!   „Mods“ → „Mod-Vorlage exportieren…“). In der App selbst steckt keine Mod: Sie kommen aus der Mod-Liste
 //!   (`shop.rs`, Download von GitHub) oder werden selbst gebaut.
 
 #[path = "../../assets/mod_template/src/api.rs"]
@@ -423,7 +423,7 @@ pub struct Mods {
     patch_version: u64,
     /// Texturen der Mod-Bilder (Bild-Nummer -> Textur)
     textures: Mutex<HashMap<u32, gfx::TextureHandle>>,
-    /// Mod-Shop (Download von GitHub)
+    /// Mod-Liste (Download von GitHub)
     pub shop: shop::Shop,
 }
 

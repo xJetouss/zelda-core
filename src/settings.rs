@@ -274,7 +274,7 @@ impl Settings {
         if s.keys.len() != BUTTONS.len() {
             s.keys = default_keys();
         }
-        // früher eingebaute Mods sind jetzt DLLs aus dem Mod-Shop (Kennung „dll:Dateiname“)
+        // früher eingebaute Mods sind jetzt DLLs aus der Mod-Liste (Kennung „dll:Dateiname“)
         for id in s.mods_on.iter_mut() {
             if !id.starts_with("dll:") {
                 *id = format!("dll:{id}.dll");

@@ -197,11 +197,11 @@ Der Gewinn ist klein (~7 % pro Bild), weil die meiste Zeit in Grafik und Ton ste
 Ohne `recomp/` baut alles wie bisher, der Schalter ist dann ausgegraut.
 
 ## Mods (in Rust, nur im RC-Modus)
-In der App steckt keine Mod. Alle Mods gibt es **kostenlos im Mod-Shop**: Menü *Mods* → „Shop öffnen“ lädt die Liste
-von GitHub (Release „mods“ dieses Repositorys), „kostenlos holen“ bzw. „Alle holen“ installiert sie in den Ordner
-`mods` neben der .exe. Danach im selben Menü einschalten. Updates erscheinen dort als „Update holen“.
+In der App steckt keine Mod. Menü *Mods* → „Mod-Liste…“ öffnet ein eigenes Fenster mit allen Mods (aus dem
+GitHub-Release „mods“ dieses Repositorys): „Holen“ bzw. „Alle holen“ installiert sie in den Ordner `mods` neben der .exe,
+der Schalter daneben schaltet sie an und aus. Neue Versionen erscheinen dort als „Update“.
 
-Im Shop (Quelltext in `mods/`, jede Mod eine eigene DLL):
+In der Mod-Liste (Quelltext in `mods/`, jede Mod eine eigene DLL):
 
 | Mod | Was sie macht |
 |---|---|
@@ -225,7 +225,7 @@ exportieren…“ legt ein Beispielprojekt mit Doku an. Eine Mod darf im RC-Modu
 - Töne abspielen (PCM, WAV-Hilfe `wav_pcm`),
 - das Spieltempo ändern, Eingaben ersetzen und (im eigenen Recompiler) sich per Hook vor Spielroutinen hängen.
 
-Die Mods im Shop baust du selbst mit `cargo build --release` im Ordner `mods/`.
+Die Mods der Liste baust du selbst mit `cargo build --release` im Ordner `mods/`.
 
 ## Öffentlicher Build und Release
 Releases auf GitHub enthalten **keine Spieldaten**: Sie werden mit `PASTLINK_PUBLIC=1` gebaut, ohne eingebaute ROM,
