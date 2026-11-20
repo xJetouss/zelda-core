@@ -1049,20 +1049,20 @@ impl App {
 
     pub(crate) fn state_path(&self, slot: u8) -> Option<PathBuf> {
         if let Some(g) = &self.gba.game {
-            return Some(crate::gba::state_path(&g.path, slot));
+            return Some(crate::gba::state_path(&g.path, slot, g.is_rc()));
         }
         self.game.as_ref().map(|g| g.path.with_extension(format!("ss{slot}")))
     }
     pub(crate) fn thumb_path(&self, slot: u8) -> Option<PathBuf> {
         if let Some(g) = &self.gba.game {
-            return Some(g.path.with_extension(format!("gs{slot}.thumb")));
+            return Some(g.path.with_extension(format!("{}{slot}.thumb", if g.is_rc() { "rs" } else { "gs" })));
         }
         self.game.as_ref().map(|g| g.path.with_extension(format!("ss{slot}.thumb")))
     }
 
     pub(crate) fn meta_path(&self, slot: u8) -> Option<PathBuf> {
         if let Some(g) = &self.gba.game {
-            return Some(g.path.with_extension(format!("gs{slot}.meta")));
+            return Some(g.path.with_extension(format!("{}{slot}.meta", if g.is_rc() { "rs" } else { "gs" })));
         }
         self.game.as_ref().map(|g| g.path.with_extension(format!("ss{slot}.meta")))
     }

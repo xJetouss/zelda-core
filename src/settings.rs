@@ -92,6 +92,10 @@ pub struct Settings {
     pub gba_integer: bool,
     pub gba_stretch: bool,
     pub last_gba: String,
+    /// The Minish Cap mit Picori (PC-Fassung, echtes Breitbild) statt mGBA, wenn tmc_core.dll da ist
+    pub gba_rc: bool,
+    /// GBA: Cheats und Y-Item je Spiel (Schlüssel: Dateiname der ROM ohne Endung)
+    pub gba_games: std::collections::HashMap<String, crate::gba::GameCfg>,
     /// Recompiled-Modus: übersetzter ROM-Code statt CPU-Emulation (Spielstände bleiben austauschbar)
     pub recompiled: bool,
     /// eingeschaltete Mods (Kennungen)
@@ -200,6 +204,8 @@ impl Default for Settings {
             gba_integer: true,
             gba_stretch: false,
             last_gba: String::new(),
+            gba_rc: true,
+            gba_games: std::collections::HashMap::new(),
             echo: true,
             voice_mute: 0,
             latency_ms: 30,

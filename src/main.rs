@@ -113,6 +113,15 @@ fn set_window_icon(window: &gpui::Window) {
 }
 
 fn main() {
+    // Absturz: Ursache in crash.log neben der .exe (ohne Konsole sieht man die Meldung sonst nicht)
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if let Some(p) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("crash.log"))) {
+            let bt = std::backtrace::Backtrace::force_capture();
+            let _ = std::fs::write(p, format!("Zelda Core {}\n{info}\n\n{bt}\n", env!("CARGO_PKG_VERSION")));
+        }
+        default_hook(info);
+    }));
     let rom_arg = std::env::args().nth(1).map(PathBuf::from);
     gpui::Application::new().run(move |cx: &mut gpui::App| {
         // Spielschrift für Karte, Inventar und Überschriften: Lilita One (SIL Open Font License, siehe assets/fonts)

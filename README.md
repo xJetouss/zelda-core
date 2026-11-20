@@ -170,7 +170,7 @@ Zwischenbilder, Karte, Tracker, Cheats und Mods weiter. Die Dialoge sind deutsch
 ## Game Boy Advance: The Minish Cap
 Liegt eine GBA-ROM neben der .exe (oder wird über „ROM öffnen…“ geladen), erscheint sie als eigene Karte im
 Hauptmenü – mit dem Titelbild samt Logo aus dem Spiel selbst. Emuliert wird mit **mGBA** (MPL-2.0, `vendor/mgba`).
-Es gibt dieselben Emulator-Funktionen wie bei A Link to the Past, ohne Mods, Recompiled-Modus, Karte und Inventar:
+Es gibt dieselben Emulator-Funktionen wie bei A Link to the Past, ohne Mods, Karte und Inventar (Recomp siehe unten):
 - **Home / Switch-Home:** Spielstand-Menü mit Vorschaubildern, „Hauptmenü“ und „Einstellungen“ (wie bei ALttP).
   Spielstände liegen als `.gs1` … neben der ROM, der Speicherstand des Spiels automatisch als `.sav`.
 - **Emulation:** Pause, Einzelbild vor, Reset, Tempo 50–300 %, ×2 und Turbo (halten), Zurückspulen, Auto-Pause.
@@ -183,11 +183,23 @@ Es gibt dieselben Emulator-Funktionen wie bei A Link to the Past, ohne Mods, Rec
   und 4 Flaschen, alle Schwerttechniken – im Spiel nachgeprüft) und eigene Codes (GameShark, Action Replay,
   CodeBreaker, „Adresse:Wert“).
 
-**Echtes 16:9:** Bei einem GBA-Spiel zeichnet der Emulator nur 240×160 Pixel; mehr Welt gibt es nur mit einem
-Nachbau des Spiels. Für The Minish Cap gibt es dafür die Dekompilierung *zeldaret/tmc* und darauf aufbauende Ports
-(PC-Port, Switch „Alek's Ultimate NX Edition“ mit echtem 16:9, 3DS-Port) – vergleichbar mit Zelda 3 für ALttP.
-Texturpacks für The Minish Cap gibt es nicht, und mGBA kann keine Texturen ersetzen. Bis dahin: 16:9 mit Rand aus
-dem Spielbild oder gestreckt, dazu die Upscaler.
+### Recomp: The Minish Cap als PC-Fassung (Project Picori) mit echtem 16:9
+Mit `tmc_core.dll` neben der .exe läuft The Minish Cap (Europa, USA, Japan) nicht mehr emuliert, sondern als
+PC-Fassung **Project Picori** (https://github.com/999sian/tmc, GPL-3.0). Die beruht auf der Dekompilierung zeldaret/tmc.
+Schalter: *Bild → Recomp (Picori)* (Standard an; aus = mGBA).
+- **Echtes Breitbild:** Bei 16:9, 21:9 oder „Fenster füllen“ zeigt das Spiel draußen wirklich mehr von der Welt
+  (bis 384 Pixel breit statt 240). Enge Räume, Menüs und Zwischensequenzen bleiben 240 Pixel breit, mit Rand.
+- Alles wie bei mGBA und bei A Link to the Past: Savestates mit Vorschaubild (`.rs1` …, gepackt, getrennt von den
+  mGBA-Ständen `.gs1`), Pause, Einzelbild, ×2/Turbo, Zurückspulen, Cheats (CodeBreaker, `Adresse:Wert`; GameShark
+  und Action Replay nur mit mGBA), Y-Taste mit Item-Leiste und alle Upscaler/HD-Filter.
+- Der Spielstand des Spiels ist dieselbe `.sav` wie bei mGBA (gleiches Format). Sie wird nur geschrieben, wenn
+  „Spielinterne Spielstände speichern“ an ist, sonst speichert man nur über Savestates.
+- Beim **ersten Start** entpackt Picori Grafiken und Töne aus deiner ROM in den Ordner `minish` neben der .exe
+  (etwa 20 Sekunden). Dieser Ordner enthält Spieldaten: nicht weitergeben.
+- Picori lässt sich pro Programmlauf nur einmal starten. Ein erneuter Start oder ein Reset springt deshalb auf den
+  Zustand direkt nach dem Start zurück. Für eine andere Minish-Cap-ROM muss Zelda Core neu gestartet werden.
+- Bauen: `python tools/patch_tmc.py` (Anpassungen, einmal), dann `python tools/build_tmc.py target/release`
+  (braucht msys2 mit ucrt64-GCC, SDL3, libpng und zlib unter `C:\msys64\ucrt64`).
 
 ## Reines Zelda 3 (zelda3.exe, Knopf „Z3“)
 
@@ -257,3 +269,7 @@ selbst erzeugte `zelda3_assets.dat` neben `zelda-core.exe`.
 ```powershell
 $env:PASTLINK_PUBLIC = "1"; cargo build --release --target-dir target/public
 ```
+
+## Lizenz
+GPL-3.0 (siehe `LICENSE`), weil Project Picori (GPL-3.0) eingebunden ist. Fremde Bestandteile und ihre Lizenzen:
+`THIRD-PARTY-LICENSES.md`. ROMs und daraus entpackte Spieldaten gehören nicht dazu.

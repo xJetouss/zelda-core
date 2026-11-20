@@ -28,3 +28,8 @@ screenshots/
 /vendor/zelda3/assets/overworld/
 /vendor/zelda3/assets/dungeon/
 /zelda3/
+
+# The Minish Cap: ROMs, Spielstände und von Picori entpackte Spieldaten
+*.gba
+*.sav
+/minish/

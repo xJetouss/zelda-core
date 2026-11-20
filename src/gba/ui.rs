@@ -34,6 +34,8 @@ pub struct GbaView {
     tick: u32,
     /// neues Bild seit dem letzten Hochladen
     dirty: bool,
+    /// Spielanzeige sichtbar (Y-Feld nur dann zeigen und Symbole nur dann aufnehmen)
+    hud: bool,
     /// The Minish Cap: Symbole der Items (wie im B-Feld), leeres Y-Feld, Item-Leiste für die Y-Taste
     icons: HashMap<u8, gfx::TextureHandle>,
     y_empty: Option<gfx::TextureHandle>,
@@ -63,6 +65,7 @@ impl Default for GbaView {
             hist: VecDeque::new(),
             tick: 0,
             dirty: false,
+            hud: false,
             icons: HashMap::new(),
             y_empty: None,
             bar_open: false,
@@ -98,8 +101,21 @@ impl App {
         }
         self.close_game();
         self.gba.game = None;
-        match Gba::load(&path) {
-            Ok(g) => {
+        match Gba::load_with(&path, self.s.gba_rc, self.s.save_sram) {
+            Ok(mut g) => {
+                // Cheats/Y-Item aus den Einstellungen; ältere Fassungen legten sie neben die ROM (einmal übernehmen,
+                // danach entfernen – gespeichert wird nur noch über Savestates und die Einstellungen der App)
+                let key = gba_key(&path);
+                match self.s.gba_games.get(&key) {
+                    Some(c) => g.cfg = c.clone(),
+                    None => {
+                        self.s.gba_games.insert(key, g.cfg.clone());
+                    }
+                }
+                let _ = std::fs::remove_file(super::cfg_path(&path));
+                let _ = std::fs::remove_file(path.with_extension("title.rgba"));
+                g.save_sav = self.s.save_sram;
+                g.apply_cheats();
                 self.gba.game = Some(g);
                 self.gba.acc = 0.0;
                 self.gba.last = Instant::now();
@@ -148,9 +164,20 @@ impl App {
         let blocked = blocked || self.paused || self.auto_paused || self.gba.win_cheats || (self.s.pause_in_menus && self.popup_open());
         let speed = if turbo { self.s.turbo_speed as f64 } else if double { 2.0 * self.s.speed as f64 } else { self.s.speed as f64 };
         let (pad, blocked) = self.gba_item_bar(ctx, pad, blocked);
-        let rewinding = rewind && self.s.rewind && !self.gba.hist.is_empty();
+        // wie bei A Link to the Past: Anzeige „TURBO“ / „×2“ / „Zurückspulen“ solange gehalten
+        self.turbo_on = turbo;
+        self.double_on = double && !turbo;
+        self.rewind_on = rewind && self.s.rewind;
+        let rewinding = self.rewind_on;
         let max_hist = (self.s.rewind_seconds as usize * 30).max(30);
+        let save_sram = self.s.save_sram;
         let Some(g) = self.gba.game.as_mut() else { return };
+        g.save_sav = save_sram;
+        if g.cfg_dirty {
+            g.cfg_dirty = false;
+            let key = gba_key(&g.path);
+            self.s.gba_games.insert(key, g.cfg.clone());
+        }
         let mut n = 0;
         if blocked {
             self.gba.acc = 0.0;
@@ -167,30 +194,32 @@ impl App {
             self.advance = false;
             n = 1;
         }
-        for _ in 0..n {
-            if rewinding {
-                // zurückspulen: alle 2 Spielbilder ein Spielstand
-                if self.gba.tick % 2 == 0 {
-                    if let Some(b) = self.gba.hist.pop_back() {
-                        if let Ok(raw) = lz4_flex::decompress_size_prepended(&b) {
-                            g.load_state(&raw);
-                        }
-                    }
+        if rewinding {
+            // je Spielbild einen Stand zurück (gesichert alle 2 Bilder), dann diesen Stand zeigen
+            for _ in 0..n {
+                if self.gba.hist.len() > 1 {
+                    self.gba.hist.pop_back();
                 }
-                self.gba.tick = self.gba.tick.wrapping_add(1);
-                g.run_frame(0);
-                // Ton beim Zurückspulen verwerfen
+            }
+            if n > 0 {
+                if let Some(raw) = self.gba.hist.back().and_then(|b| lz4_flex::decompress_size_prepended(b).ok()) {
+                    g.load_state(&raw);
+                    g.run_frame(0);
+                }
                 let mut skip = Vec::new();
                 g.take_audio(&mut skip);
-                continue;
             }
-            g.run_frame(pad);
-            self.gba.tick = self.gba.tick.wrapping_add(1);
-            if self.s.rewind && self.gba.tick % 2 == 0 {
-                if let Some(st) = g.save_state() {
-                    self.gba.hist.push_back(lz4_flex::compress_prepend_size(&st));
-                    while self.gba.hist.len() > max_hist {
-                        self.gba.hist.pop_front();
+        } else {
+            for _ in 0..n {
+                g.run_frame(pad);
+                self.gba.tick = self.gba.tick.wrapping_add(1);
+                // wie bei ALttP: alle 2 Bilder sichern, im Turbo/×2 alle 8
+                if self.s.rewind && self.gba.tick % (if turbo || double { 8 } else { 2 }) == 0 {
+                    if let Some(st) = g.save_state() {
+                        self.gba.hist.push_back(lz4_flex::compress_prepend_size(&st));
+                        while self.gba.hist.len() > max_hist {
+                            self.gba.hist.pop_front();
+                        }
                     }
                 }
             }
@@ -198,7 +227,7 @@ impl App {
         if !self.s.rewind {
             self.gba.hist.clear();
         }
-        self.rewind_on = rewinding;
+        self.gba.hud = g.hud_visible();
         self.game_fps_count += n;
         // Ton: nur bei normalem Tempo (sonst würde er sich stauen)
         self.gba.abuf.clear();
@@ -229,13 +258,14 @@ impl App {
         }
         // Symbole aus dem Spiel aufnehmen (einmal je Item; Flaschen jedes Mal neu, ihr Inhalt wechselt)
         let mut new_icons: Vec<(u8, Vec<u8>)> = Vec::new();
-        if self.gba.y_empty.is_none() && g.frames > 60 {
+        let hud = self.gba.hud;
+        if self.gba.y_empty.is_none() && hud {
             if let Some(mut img) = g.capture_icon(0) {
                 letter_y(&mut img);
                 new_icons.push((0, img));
             }
         }
-        if held && !self.gba.bar_open {
+        if held && !self.gba.bar_open && hud {
             self.gba.bar_items = g.owned_items();
             for &i in &self.gba.bar_items {
                 if !self.gba.icons.contains_key(&i) || (28..=31).contains(&i) {
@@ -249,7 +279,7 @@ impl App {
             self.gba.bar_prev = pad;
         }
         let y = g.cfg.y_item;
-        if y != 0 && !self.gba.icons.contains_key(&y) && g.frames > 60 {
+        if y != 0 && !self.gba.icons.contains_key(&y) && hud {
             if let Some(img) = g.capture_icon(y) {
                 new_icons.push((y, img));
             }
@@ -294,7 +324,7 @@ impl App {
     /// Y-Feld neben B und offene Item-Leiste zeichnen (The Minish Cap)
     fn gba_draw_y(&self, painter: &gfx::Painter, r: gfx::Rect, gp: f32) {
         let Some(g) = &self.gba.game else { return };
-        if !g.is_minish() {
+        if !g.is_minish() || (!self.gba.hud && !self.gba.bar_open) {
             return;
         }
         let uv = gfx::Rect::from_min_max(gfx::pos2(0.0, 0.0), gfx::pos2(1.0, 1.0));
@@ -302,7 +332,7 @@ impl App {
         let size = gfx::vec2(super::ICON_W as f32 * gp, super::ICON_H as f32 * gp);
         let tex = if g.cfg.y_item != 0 { self.gba.icons.get(&g.cfg.y_item).or(self.gba.y_empty.as_ref()) } else { self.gba.y_empty.as_ref() };
         if let Some(t) = tex {
-            painter.image(t.id(), gfx::Rect::from_min_size(at((super::ICON_X - 24) as f32, super::ICON_Y as f32), size), uv, Color32::WHITE);
+            painter.image(t.id(), gfx::Rect::from_min_size(at((super::ICON_X + g.hud_dx() - 24) as f32, super::ICON_Y as f32), size), uv, Color32::WHITE);
         }
         if !self.gba.bar_open {
             return;
@@ -364,6 +394,10 @@ impl App {
                 }
             }
         }
+        // noch kein Bild (Recomp startet noch) oder Größe passt nicht: nichts hochladen
+        if self.gba.cur.len() != w * h || self.gba.prev.len() != w * h {
+            return;
+        }
         let src: Vec<Color32> = if blending {
             let a = (self.gba.acc.clamp(0.0, 1.0) * 256.0) as u32;
             let mix = |x: u8, y: u8| ((x as u32 * (256 - a) + y as u32 * a) >> 8) as u8;
@@ -387,6 +421,22 @@ impl App {
     /// Spielbild im GBA-Modus (3:2, auf Wunsch ganzzahlig vergrößert oder gestreckt)
     pub(crate) fn gba_view(&mut self, painter: &gfx::Painter, area: gfx::Rect, ctx: &gfx::Context) {
         let en = self.s.ui_en;
+        // Recomp (Picori): die Breite der Spielansicht folgt dem gewählten Seitenverhältnis (echtes Breitbild)
+        if let Some(g) = self.gba.game.as_mut() {
+            let (vw, vh) = match self.s.widescreen {
+                1 => (16, 9),
+                2 => (21, 9),
+                3 => (area.width().max(1.0) as i32, area.height().max(1.0) as i32),
+                _ => (3, 2),
+            };
+            g.set_view(vw, vh, self.s.widescreen != 0);
+            if g.loading() {
+                let gp = (area.height() / 160.0).round().max(1.0);
+                let txt = tr(en, "RECOMP STARTET ... (BEIM ERSTEN MAL ETWA 20 S)", "RECOMP STARTING ... (ABOUT 20 S THE FIRST TIME)");
+                crate::pixfont::text(painter, area.center(), gfx::Align2::CENTER_CENTER, txt, gp, Color32::WHITE);
+                return;
+            }
+        }
         let Some(g) = &self.gba.game else { return };
         let (gw, gh) = (g.w as f32, g.h as f32);
         let uv = gfx::Rect::from_min_max(gfx::pos2(0.0, 0.0), gfx::pos2(1.0, 1.0));
@@ -479,9 +529,14 @@ impl App {
     /// Spielstand speichern (Platz 1..9), mit Vorschaubild für das Spielstand-Menü
     pub(crate) fn gba_save_slot(&mut self, slot: u8) {
         let Some(g) = &self.gba.game else { return };
-        let r = g.save_state().ok_or_else(|| "Kern liefert keinen Spielstand".to_string()).and_then(|b| std::fs::write(super::state_path(&g.path, slot), b).map_err(|e| e.to_string()));
-        if r.is_ok() && g.frame.len() == super::W * super::H * 4 {
-            let _ = std::fs::write(g.path.with_extension(format!("gs{slot}.thumb")), lz4_flex::compress_prepend_size(&g.frame));
+        let rc = g.is_rc();
+        // Picori-Stände (alle Spielvariablen, gut 1 MB) gepackt speichern
+        let r = g
+            .save_state()
+            .ok_or_else(|| "Kern liefert keinen Spielstand".to_string())
+            .and_then(|b| std::fs::write(super::state_path(&g.path, slot, rc), if rc { lz4_flex::compress_prepend_size(&b) } else { b }).map_err(|e| e.to_string()));
+        if let (true, Some(t)) = (r.is_ok(), g.thumb()) {
+            let _ = std::fs::write(g.path.with_extension(format!("{}{slot}.thumb", if rc { "rs" } else { "gs" })), lz4_flex::compress_prepend_size(&t));
         }
         self.slot = slot;
         self.thumbs.remove(&slot);
@@ -496,7 +551,12 @@ impl App {
     pub(crate) fn gba_load_slot(&mut self, slot: u8) {
         self.slot = slot;
         let Some(g) = &mut self.gba.game else { return };
-        let ok = std::fs::read(super::state_path(&g.path, slot)).map(|b| g.load_state(&b)).unwrap_or(false);
+        let rc = g.is_rc();
+        let ok = std::fs::read(super::state_path(&g.path, slot, rc))
+            .ok()
+            .and_then(|b| if rc { lz4_flex::decompress_size_prepended(&b).ok() } else { Some(b) })
+            .map(|b| g.load_state(&b))
+            .unwrap_or(false);
         if ok {
             self.gba.hist.clear();
             g.run_frame(0);
@@ -510,7 +570,7 @@ impl App {
     /// Zeit des Spielstands (für das Menü), None = leer
     pub(crate) fn gba_slot_time(&self, slot: u8) -> Option<String> {
         let g = self.gba.game.as_ref()?;
-        let t = std::fs::metadata(super::state_path(&g.path, slot)).ok()?.modified().ok()?;
+        let t = std::fs::metadata(super::state_path(&g.path, slot, g.is_rc())).ok()?.modified().ok()?;
         let secs = t.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as i64;
         Some(crate::gba::ui::local_time(secs))
     }
@@ -623,4 +683,9 @@ pub(crate) fn letter_y(img: &mut [u8]) {
             img[i..i + 4].copy_from_slice(&lcol);
         }
     }
+}
+
+/// Schlüssel eines GBA-Spiels in den Einstellungen
+fn gba_key(p: &Path) -> String {
+    p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
 }

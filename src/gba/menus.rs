@@ -132,6 +132,20 @@ impl Root {
                     ws = ws.child(radio(format!("gba-ws-{val}"), n, s.widescreen == val, cx, move |r| r.app.s.widescreen = val));
                 }
                 v.push(ws.into_any_element());
+                if crate::gba::picori::available() {
+                    let rc = s.gba_rc;
+                    v.push(
+                        check("gba_rc", t("Recomp (Picori): The Minish Cap als PC-Fassung mit echtem Breitbild", "Recomp (Picori): The Minish Cap as PC port with true widescreen"), rc, true, cx, |r| {
+                            r.app.s.gba_rc = !r.app.s.gba_rc;
+                            // neu starten, damit der andere Kern übernimmt (Spielstand des Spiels bleibt, Savestates je Kern)
+                            if let Some(p) = r.app.gba.game.as_ref().map(|g| g.path.clone()) {
+                                r.app.gba_open(p);
+                            }
+                        })
+                        .into_any_element(),
+                    );
+                    v.push(Self::note(t("Mit Recomp zeigt 16:9/21:9 wirklich mehr von der Spielwelt (bis 384 Pixel breit). Savestates von mGBA und Recomp sind getrennt.", "With recomp, 16:9/21:9 really shows more of the world (up to 384 pixels wide). mGBA and recomp save states are separate.")));
+                }
                 chk!("gba_stretch", t("Bild auf die Fläche strecken (sonst Rand aus dem Spielbild)", "Stretch the image (otherwise a border from the game image)"), s.gba_stretch);
                 if s.widescreen != 0 && !s.gba_stretch {
                     v.push(Self::note(t("Das GBA-Bild selbst ist 3:2. Links und rechts erscheint das Spielbild weich und dunkel als Rand.", "The GBA image itself is 3:2. The game image fills the sides, soft and dark.")));

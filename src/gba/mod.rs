@@ -5,6 +5,7 @@
 
 #[cfg(pastlink_gba)]
 pub mod core;
+pub mod picori;
 pub mod ui;
 
 use serde::{Deserialize, Serialize};
@@ -143,9 +144,57 @@ pub fn save_cfg(rom: &Path, c: &GameCfg) {
     }
 }
 
-/// Spielstand-Datei für Platz `slot` (`<rom>.gs1` …)
-pub fn state_path(rom: &Path, slot: u8) -> PathBuf {
-    rom.with_extension(format!("gs{slot}"))
+/// Spielstand-Datei für Platz `slot` (`<rom>.gs1` …; mit Picori `<rom>.rs1` …, anderes Format)
+pub fn state_path(rom: &Path, slot: u8, rc: bool) -> PathBuf {
+    rom.with_extension(format!("{}{slot}", if rc { "rs" } else { "gs" }))
+}
+
+/// Cheat-Zeilen selbst ausführen (für Picori, das keinen Cheat-Kern hat): CodeBreaker (3 = Byte schreiben,
+/// 8 = Halbwort schreiben, 2 = Halbwort ODER, 6 = Halbwort UND, 7/A = nächste Zeile nur bei gleich/ungleich) und
+/// VBA-Rohcodes `AAAAAAAA:WW` (Byte), `AAAAAAAA:WWWW` (Halbwort). Andere Formate werden übersprungen.
+pub fn run_cheat_lines(lines: &[&str], mut read: impl FnMut(u32, usize) -> Option<Vec<u8>>, mut write: impl FnMut(u32, &[u8])) {
+    let mut skip = false;
+    for l in lines {
+        let l = l.trim();
+        if l.is_empty() {
+            continue;
+        }
+        if skip {
+            skip = false;
+            continue;
+        }
+        if let Some((a, v)) = l.split_once(':') {
+            let (Ok(a), Ok(val)) = (u32::from_str_radix(a.trim(), 16), u32::from_str_radix(v.trim(), 16)) else { continue };
+            if v.trim().len() <= 2 {
+                write(a, &[val as u8]);
+            } else {
+                write(a, &(val as u16).to_le_bytes());
+            }
+            continue;
+        }
+        let mut it = l.split_whitespace();
+        let (Some(a), Some(v)) = (it.next(), it.next()) else { continue };
+        let (Ok(a), Ok(val)) = (u32::from_str_radix(a, 16), u32::from_str_radix(v, 16)) else { continue };
+        let (t, addr, val) = (a >> 28, a & 0x0FFF_FFFF, val as u16);
+        let mut half = || read(addr, 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
+        match t {
+            3 => write(addr, &[val as u8]),
+            8 => write(addr, &val.to_le_bytes()),
+            2 => {
+                if let Some(h) = half() {
+                    write(addr, &(h | val).to_le_bytes());
+                }
+            }
+            6 => {
+                if let Some(h) = half() {
+                    write(addr, &(h & val).to_le_bytes());
+                }
+            }
+            7 => skip = half() != Some(val),
+            0xA => skip = half() == Some(val),
+            _ => {}
+        }
+    }
 }
 
 /// Ordner für den Kern (BIOS `gba_bios.bin` darf hier liegen, sonst eingebauter Ersatz)
@@ -190,10 +239,57 @@ mod running {
         y_b_orig: u8,
         /// Probelauf (Titelbild): nie den Batterie-Speicher schreiben
         pub(super) no_save: bool,
+        /// Speicherstand des Spiels als .sav schreiben (Einstellung „Spielinterne Spielstände speichern“, wie bei
+        /// A Link to the Past; aus = es wird nur über Savestates gespeichert)
+        pub save_sav: bool,
+        /// Cheats/Y-Item geändert: die App übernimmt sie in ihre Einstellungen
+        pub cfg_dirty: bool,
+        /// The Minish Cap als PC-Fassung (Picori) statt mGBA
+        rc: Option<super::picori::Core>,
+        /// Schreiberlaubnis, die Picori zuletzt bekam
+        rc_write: bool,
     }
 
     impl Gba {
         pub fn load(path: &Path) -> Result<Gba, String> {
+            Self::load_with(path, false, false)
+        }
+
+        /// `rc`: The Minish Cap mit Picori (PC-Fassung, echtes Breitbild) statt mGBA, wenn möglich.
+        /// `write_sav`: das Spiel darf seinen Spielstand (.sav) schreiben.
+        pub fn load_with(path: &Path, rc: bool, write_sav: bool) -> Result<Gba, String> {
+            if rc {
+                let mut b = [0u8; 0xC0];
+                use std::io::Read;
+                std::fs::File::open(path).and_then(|mut f| f.read_exact(&mut b)).map_err(|e| format!("ROM nicht lesbar: {e}"))?;
+                let code = header(&b).map(|h| h.1).unwrap_or_default();
+                if super::picori::available() && super::picori::supports(&code) {
+                    let core = super::picori::Core::open(path, &path.with_extension("sav"), write_sav)?;
+                    return Ok(Gba {
+                        path: path.to_path_buf(),
+                        fps: 59.7275,
+                        rate: 48000.0,
+                        frame: vec![0; W * H * 4],
+                        w: W,
+                        h: H,
+                        new_frame: false,
+                        sram_saved: Vec::new(),
+                        res_pos: 0.0,
+                        res_last: (0, 0),
+                        cfg: GameCfg::default(),
+                        code,
+                        frames: 0,
+                        no_save: false,
+                        save_sav: write_sav,
+                        cfg_dirty: false,
+                        temp_cheats: Vec::new(),
+                        y_phase: 0,
+                        y_b_orig: 0,
+                        rc: Some(core),
+                        rc_write: write_sav,
+                    });
+                }
+            }
             if BUSY.swap(true, Ordering::SeqCst) {
                 return Err("Es läuft schon ein GBA-Spiel".into());
             }
@@ -234,9 +330,13 @@ mod running {
                 code: header(&rom).map(|h| h.1).unwrap_or_default(),
                 frames: 0,
                 no_save: false,
+                save_sav: false,
+                cfg_dirty: false,
                 temp_cheats: Vec::new(),
                 y_phase: 0,
                 y_b_orig: 0,
+                rc: None,
+                rc_write: false,
             };
             // Spielstand des Spiels (Batterie-Speicher)
             if let Ok(b) = std::fs::read(path.with_extension("sav")) {
@@ -274,7 +374,11 @@ mod running {
 
         /// Batterie-Speicher schreiben, wenn sich etwas geändert hat
         pub fn flush_sram(&mut self) {
-            if self.no_save {
+            if self.rc.is_some() {
+                // Picori schreibt den Spielstand selbst (nur mit Erlaubnis, siehe rc_frame)
+                return;
+            }
+            if self.no_save || !self.save_sav {
                 return;
             }
             let now = self.sram().to_vec();
@@ -288,6 +392,10 @@ mod running {
         /// ein Bild mit diesen Tasten (SNES-Bitbelegung)
         pub fn run_frame(&mut self, pad: u16) {
             let pad = self.y_step(pad);
+            if self.rc.is_some() {
+                self.rc_frame(pad, false);
+                return;
+            }
             if let Ok(mut s) = core::ST.lock() {
                 if let Some(s) = s.as_mut() {
                     s.pad = pad;
@@ -311,9 +419,89 @@ mod running {
             }
         }
 
+        /// Picori: ein Spielbild (Cheats vorher in den Speicher schreiben, wie es mGBA je Bild tut)
+        fn rc_frame(&mut self, pad: u16, no_bg: bool) {
+            let write = self.save_sav && !self.no_save;
+            let lines: Vec<String> = self.cheat_lines();
+            let sav = self.path.with_extension("sav");
+            let Some(c) = self.rc.as_mut() else { return };
+            if !c.ready() && !matches!(c.poll_ready(), Ok(true)) {
+                return;
+            }
+            if write != self.rc_write {
+                self.rc_write = write;
+                c.set_save(&sav, write);
+            }
+            if !lines.is_empty() {
+                let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
+                let cell = std::cell::RefCell::new(&mut *c);
+                super::run_cheat_lines(&refs, |a, n| cell.borrow().read(a, n), |a, b| {
+                    cell.borrow_mut().write(a, b);
+                });
+            }
+            let r = if no_bg { c.render_without_bg(pad, &mut self.frame) } else { c.run_frame(pad, &mut self.frame) };
+            if let Some((w, h)) = r {
+                self.w = w;
+                self.h = h;
+                self.new_frame = true;
+                self.frames += 1;
+            }
+        }
+
+        /// alle eingeschalteten Cheat-Zeilen (vorübergehende der Y-Taste zuerst)
+        fn cheat_lines(&self) -> Vec<String> {
+            let mut v: Vec<String> = self.temp_cheats.clone();
+            for c in self.cfg.cheats.iter().filter(|c| c.on) {
+                v.extend(c.code.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()));
+            }
+            v
+        }
+
+        /// Läuft The Minish Cap mit Picori (PC-Fassung)?
+        pub fn is_rc(&self) -> bool {
+            self.rc.is_some()
+        }
+
+        /// Picori startet noch (entpackt beim ersten Mal Grafiken und Töne aus der ROM)
+        pub fn loading(&self) -> bool {
+            self.rc.as_ref().is_some_and(|c| !c.ready())
+        }
+
+        /// Picori: Anzeigefläche für echtes Breitbild (Seitenverhältnis), `wide` = Breitbild an
+        pub fn set_view(&mut self, w: i32, h: i32, wide: bool) {
+            if let Some(c) = self.rc.as_mut() {
+                c.set_view(w, h, wide);
+            }
+        }
+
+        /// Versatz der Spielanzeige nach rechts (Picori rückt sie im Breitbild an den rechten Rand)
+        pub fn hud_dx(&self) -> usize {
+            if self.rc.is_some() { self.w.saturating_sub(W) } else { 0 }
+        }
+
+        /// Vorschaubild 240×160 (Mitte des Bildes)
+        pub fn thumb(&self) -> Option<Vec<u8>> {
+            if self.h != H || self.w < W || self.frame.len() < self.w * H * 4 {
+                return None;
+            }
+            let x0 = (self.w - W) / 2;
+            let mut v = Vec::with_capacity(W * H * 4);
+            for y in 0..H {
+                let i = (y * self.w + x0) * 4;
+                v.extend_from_slice(&self.frame[i..i + W * 4]);
+            }
+            Some(v)
+        }
+
         /// Ton seit dem letzten Abholen, umgerechnet auf 32 kHz Stereo (wie die Tonausgabe der App)
         pub fn take_audio(&mut self, out: &mut Vec<i16>) {
-            let src: Vec<i16> = core::ST.lock().ok().and_then(|mut s| s.as_mut().map(|s| std::mem::take(&mut s.audio))).unwrap_or_default();
+            let src: Vec<i16> = if let Some(c) = &self.rc {
+                let mut v = Vec::new();
+                c.take_audio(&mut v);
+                v
+            } else {
+                core::ST.lock().ok().and_then(|mut s| s.as_mut().map(|s| std::mem::take(&mut s.audio))).unwrap_or_default()
+            };
             let step = self.rate / 32_000.0;
             let n = src.len() / 2;
             let at = |i: usize, last: (i16, i16)| if i == 0 { last } else { (src[(i - 1) * 2], src[(i - 1) * 2 + 1]) };
@@ -333,16 +521,26 @@ mod running {
         }
 
         pub fn reset(&mut self) {
+            if let Some(c) = self.rc.as_mut() {
+                c.reset();
+                return;
+            }
             unsafe { core::retro_reset() };
         }
 
         pub fn save_state(&self) -> Option<Vec<u8>> {
+            if let Some(c) = &self.rc {
+                return if c.ready() { c.save_state() } else { None };
+            }
             let n = unsafe { core::retro_serialize_size() };
             let mut b = vec![0u8; n];
             (n > 0 && unsafe { core::retro_serialize(b.as_mut_ptr() as *mut _, n) }).then_some(b)
         }
 
         pub fn load_state(&mut self, b: &[u8]) -> bool {
+            if let Some(c) = self.rc.as_mut() {
+                return c.load_state(b);
+            }
             !b.is_empty() && unsafe { core::retro_unserialize(b.as_ptr() as *const _, b.len()) }
         }
 
@@ -400,11 +598,38 @@ mod running {
             let st = self.save_state()?;
             let frame = self.frame.clone();
             let (nf, fr) = (self.new_frame, self.frames);
-            for l in 0..4 {
-                unsafe { core::pl_mgba_enable_layer(l, false) };
-            }
-            let ok = self.poke(minish::EQUIP_B, &[item]);
+            let (fw, fh) = (self.w, self.h);
             let mut img = None;
+            if self.rc.is_some() {
+                // Picori: Item auf B, zwei Bilder ohne Hintergründe, B-Feld ausschneiden
+                if self.poke(minish::EQUIP_B, &[item]) {
+                    self.rc_frame(0, true);
+                    self.rc_frame(0, true);
+                    let dx = self.hud_dx();
+                    if self.frame.len() >= self.w * self.h * 4 && self.h == H {
+                        let mut out = vec![0u8; ICON_W * ICON_H * 4];
+                        for y in 0..ICON_H {
+                            for x in 0..ICON_W {
+                                let i = ((ICON_Y + y) * self.w + ICON_X + dx + x) * 4;
+                                let p = &self.frame[i..i + 4];
+                                let o = (y * ICON_W + x) * 4;
+                                if p[0] > 8 || p[1] > 8 || p[2] > 8 {
+                                    out[o..o + 4].copy_from_slice(&[p[0], p[1], p[2], 255]);
+                                }
+                            }
+                        }
+                        img = Some(out);
+                    }
+                    let mut skip = Vec::new();
+                    self.take_audio(&mut skip);
+                }
+            }
+            if self.rc.is_none() {
+                for l in 0..4 {
+                    unsafe { core::pl_mgba_enable_layer(l, false) };
+                }
+            }
+            let ok = self.rc.is_none() && self.poke(minish::EQUIP_B, &[item]);
             if ok {
                 for _ in 0..2 {
                     unsafe { core::retro_run() };
@@ -429,17 +654,31 @@ mod running {
                     }
                 }
             }
-            for l in 0..4 {
-                unsafe { core::pl_mgba_enable_layer(l, true) };
+            if self.rc.is_none() {
+                for l in 0..4 {
+                    unsafe { core::pl_mgba_enable_layer(l, true) };
+                }
             }
             self.load_state(&st);
+            self.w = fw;
+            self.h = fh;
             self.frame = frame;
             self.new_frame = nf;
             self.frames = fr;
-            img
+            // gültig nur mit durchsichtigen Ecken und nicht fast ganz deckend (sonst lief gerade kein Spiel, z. B.
+            // weißer Logo-Bildschirm)
+            img.filter(|im| {
+                let a = |x: usize, y: usize| im[(y * ICON_W + x) * 4 + 3];
+                let opaque = im.chunks_exact(4).filter(|p| p[3] != 0).count();
+                a(0, 0) == 0 && a(ICON_W - 1, 0) == 0 && a(0, ICON_H - 1) == 0 && a(ICON_W - 1, ICON_H - 1) == 0 && opaque < ICON_W * ICON_H * 6 / 10 && opaque > 20
+            })
         }
 
         pub fn apply_cheats(&mut self) {
+            if self.rc.is_some() {
+                // Picori: die Cheats werden je Bild in rc_frame geschrieben
+                return;
+            }
             unsafe { core::retro_cheat_reset() };
             for (i, code) in self.temp_cheats.iter().enumerate() {
                 if let Ok(cs) = std::ffi::CString::new(code.as_str()) {
@@ -462,6 +701,9 @@ mod running {
         }
 
         pub fn poke_many(&mut self, writes: &[(u32, &[u8])]) -> bool {
+            if let Some(c) = self.rc.as_mut() {
+                return c.ready() && writes.iter().all(|(a, b)| c.write(*a, b));
+            }
             let Some(mut st) = self.save_state() else { return false };
             for (addr, bytes) in writes {
                 let Some(off) = addr.checked_sub(0x0200_0000).filter(|o| (*o as usize) + bytes.len() <= 0x40000) else { return false };
@@ -474,22 +716,58 @@ mod running {
 
         /// Bytes aus dem Arbeitsspeicher lesen (über den Spielstand)
         pub fn peek(&self, addr: u32, n: usize) -> Option<Vec<u8>> {
+            if let Some(c) = &self.rc {
+                return if c.ready() { c.read(addr, n) } else { None };
+            }
             let st = self.save_state()?;
             let off = addr.checked_sub(0x0200_0000)? as usize;
             st.get(0x21000 + off..0x21000 + off + n).map(|s| s.to_vec())
         }
 
-        pub fn save_cfg(&self) {
-            save_cfg(&self.path, &self.cfg);
+        /// Cheats/Y-Item wurden geändert (gespeichert werden sie in den Einstellungen der App, nicht neben der ROM)
+        pub fn save_cfg(&mut self) {
+            self.cfg_dirty = true;
+        }
+
+        /// Ist die Spielanzeige von The Minish Cap zu sehen? (Erkennung am R-Knopf oben rechts: hellgraue Fläche)
+        pub fn hud_visible(&self) -> bool {
+            if !self.is_minish() || self.w < W || self.h != H || self.frame.len() < self.w * H * 4 {
+                return false;
+            }
+            if let Some(c) = &self.rc {
+                // Picori: aus dem Spielzustand (die Anzeige am R-Knopf trägt dort oft Text, z. B. „Rollen“)
+                return c.hud();
+            }
+            let (dx, fw) = (self.hud_dx(), self.w);
+            let at = |x: usize, y: usize| {
+                let i = (y * fw + x + dx) * 4;
+                (self.frame[i] as i32, self.frame[i + 1] as i32, self.frame[i + 2] as i32)
+            };
+            let lum = |x: usize, y: usize| {
+                let (r, g, b) = at(x, y);
+                (r * 3 + g * 6 + b) / 10
+            };
+            // R-Knopf: dunkler Rand oben, helle Fläche, dunkler Buchstabe „R“ (ein weißer oder heller Bildschirm hat
+            // das nicht)
+            let rim = [210usize, 214, 218].iter().all(|&x| lum(x, 10) < 130);
+            let face = [210usize, 214, 218].iter().all(|&x| lum(x, 13) > 150);
+            let letter = lum(222, 17) < 140;
+            rim && face && letter
         }
 
         pub fn set_option(&self, key: &str, value: &str) {
+            if self.rc.is_some() {
+                return;
+            }
             core::set_var(key, value);
         }
     }
 
     impl Drop for Gba {
         fn drop(&mut self) {
+            if self.rc.is_some() {
+                return;
+            }
             self.flush_sram();
             unsafe { core::retro_unload_game() };
             core::stop();
@@ -498,14 +776,8 @@ mod running {
     }
 
     /// Titelbild für die Karte im Hauptmenü: Spiel kurz ohne Ton laufen lassen und das Bild nehmen, sobald der
-    /// Titel steht (zwischengespeichert als `<rom>.title.rgba`)
+    /// Titel steht (bleibt nur im Speicher – es wird nichts neben die ROM geschrieben)
     pub fn title_image(path: &Path) -> Option<(Vec<u8>, usize, usize)> {
-        let cache = path.with_extension("title.rgba");
-        if let Ok(b) = std::fs::read(&cache) {
-            if b.len() == W * H * 4 {
-                return Some((b, W, H));
-            }
-        }
         let mut g = Gba::load(path).ok()?;
         g.no_save = true;
         // Titelbild nach den Logos (ohne Tastendruck – Start ginge am Titel vorbei)
@@ -515,7 +787,6 @@ mod running {
         }
         let img = g.frame.clone();
         drop(g);
-        let _ = std::fs::write(&cache, &img);
         Some((img, W, H))
     }
 }
@@ -540,6 +811,22 @@ impl Gba {
     pub fn load(_: &Path) -> Result<Gba, String> {
         Err("GBA ist in diesem Build nicht enthalten".into())
     }
+    pub fn load_with(_: &Path, _: bool, _: bool) -> Result<Gba, String> {
+        Err("GBA ist in diesem Build nicht enthalten".into())
+    }
+    pub fn is_rc(&self) -> bool {
+        false
+    }
+    pub fn loading(&self) -> bool {
+        false
+    }
+    pub fn set_view(&mut self, _: i32, _: i32, _: bool) {}
+    pub fn hud_dx(&self) -> usize {
+        0
+    }
+    pub fn thumb(&self) -> Option<Vec<u8>> {
+        None
+    }
     pub fn run_frame(&mut self, _: u16) {}
     pub fn take_audio(&mut self, _: &mut Vec<i16>) {}
     pub fn reset(&mut self) {}
@@ -550,13 +837,33 @@ impl Gba {
         false
     }
     pub fn apply_cheats(&mut self) {}
-    pub fn save_cfg(&self) {}
+    pub fn save_cfg(&mut self) {}
     pub fn flush_sram(&mut self) {}
 }
 
 #[cfg(all(test, pastlink_gba))]
 mod tests {
     use super::*;
+
+    /// Cheat-Ausführer für Picori: CodeBreaker 3/8/2/7 und VBA-Rohcodes auf einem Speicher-Ersatz
+    #[test]
+    fn cheat_lines() {
+        let mut mem = std::collections::HashMap::<u32, u8>::new();
+        let lines = ["32002AEA 0050", "82002B00 03E7", "22002B32 5554", "02002AEA:A0", "72002B00 1234", "32002AEB 0099", "32002AEC 0063"];
+        mem.insert(0x2002B32, 0x01);
+        let m = std::cell::RefCell::new(mem);
+        run_cheat_lines(&lines, |a, n| Some((0..n as u32).map(|i| *m.borrow().get(&(a + i)).unwrap_or(&0)).collect()), |a, b| {
+            for (i, v) in b.iter().enumerate() {
+                m.borrow_mut().insert(a + i as u32, *v);
+            }
+        });
+        let m = m.into_inner();
+        assert_eq!(m[&0x2002AEA], 0xA0);
+        assert_eq!((m[&0x2002B00], m[&0x2002B01]), (0xE7, 0x03));
+        assert_eq!((m[&0x2002B32], m[&0x2002B33]), (0x55, 0x55));
+        assert!(!m.contains_key(&0x2002AEB), "Bedingung 7 hätte die nächste Zeile überspringen müssen");
+        assert_eq!(m[&0x2002AEC], 0x63);
+    }
 
     /// GBA-ROM aus `PASTLINK_GBA_ROM` (eine Kopie! Der Test schreibt `.sav` daneben): Bilder alle 120 Spielbilder, Ton, Spielstand hin und zurück
     #[test]
@@ -798,5 +1105,45 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
         let b = g.peek(minish::EQUIP_B, 1).unwrap()[0];
         println!("B nach Y: {b}");
         assert_eq!(b, 0);
+    }
+
+    /// Erkennung der Spielanzeige: Logo (weiß), Titel, Spiel (`GBA_STATE`), Item-Menü
+    #[test]
+    #[ignore]
+    fn dev_gba_hud() {
+        let (Ok(p), Ok(st)) = (std::env::var("PASTLINK_GBA_ROM"), std::env::var("GBA_STATE")) else { return };
+        let mut g = Gba::load(Path::new(&p)).unwrap();
+        g.no_save = true;
+        for _ in 0..100 {
+            g.run_frame(0);
+        }
+        let logo = g.hud_visible();
+        for _ in 0..500 {
+            g.run_frame(0);
+        }
+        let title = g.hud_visible();
+        assert!(g.load_state(&std::fs::read(st).unwrap()));
+        for _ in 0..10 {
+            g.run_frame(0);
+        }
+        let game = g.hud_visible();
+        let dump = |g: &Gba, name: &str| {
+            println!("{name}:");
+            for y in 8..26 {
+                let row: String = (202..232).map(|x| { let i = (y * W + x) * 4; let l = (g.frame[i] as u32 * 3 + g.frame[i + 1] as u32 * 6 + g.frame[i + 2] as u32) / 10; [' ', '.', ':', '-', '=', '+', '*', '#', '%', '@'][(l as usize * 10 / 256).min(9)] }).collect();
+                println!("  {y:2} {row}");
+            }
+        };
+        dump(&g, "Spiel");
+        let icon = g.capture_icon(0).is_some();
+        for f in 0..220 {
+            g.run_frame(if (30..40).contains(&f) { 0x1000 } else { 0 });
+        }
+        let menu = g.hud_visible();
+        let px: Vec<crate::gfx::Color32> = g.frame.chunks_exact(4).map(|c| crate::gfx::Color32::from_rgb(c[0], c[1], c[2])).collect();
+        crate::devtest::bmp(&format!("{}/hud_menu.bmp", std::env::var("PASTLINK_OUT").unwrap_or_else(|_| ".".into())), W, H, &px);
+        dump(&g, "Menü");
+        println!("Anzeige: Logo {logo}, Titel {title}, Spiel {game}, Item-Menü {menu}; Symbol im Spiel gültig {icon}");
+        assert!(!logo && !title && game && icon);
     }
 }
