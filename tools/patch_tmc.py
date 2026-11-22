@@ -280,3 +280,41 @@ patch('port/port_save.c', [
     ('    char tmp[SAVE_FILENAME_MAX + 8];', '    char tmp[SAVE_PATH_MAX + 8];'),
     ('        char bak[SAVE_FILENAME_MAX + 4];', '        char bak[SAVE_PATH_MAX + 4];'),
 ])
+
+# schneller Start: keine einzelnen ROM-Seiten unter rom_data/ lesen oder schreiben (die ganze ROM liegt im Speicher;
+# 2791 kleine Dateien zu öffnen kostete bei jedem Start mehrere Sekunden)
+patch('port/port_rom.c', [
+    ('''    if (IsPageExtracted(page))
+        return;
+
+    u32 offset = page << ROM_PAGE_SHIFT;''', '''    if (IsPageExtracted(page))
+        return;
+#ifdef TMC_CORE_DLL
+    MarkPageExtracted(page);
+    return;
+#endif
+
+    u32 offset = page << ROM_PAGE_SHIFT;'''),
+    ('''    int pagesLoaded = LoadExtractedPages();
+    if (pagesLoaded > 0) {''', '''#ifdef TMC_CORE_DLL
+    int pagesLoaded = 0;
+#else
+    int pagesLoaded = LoadExtractedPages();
+#endif
+    if (pagesLoaded > 0) {'''),
+])
+
+# „nur über Savestates speichern“: ein Speichern im Spiel gilt als gelungen, obwohl die .sav nicht geschrieben wird
+# (der Spielstand liegt im Speicher und steckt in jedem Savestate) – sonst meldet das Spiel „Speichern fehlgeschlagen“
+# und man kann keine neue Datei anlegen
+patch('port/port_save.c', [
+    ('''    if (sSaveTxnDepth == 0)
+        FlushEepromFile();
+    return !sEepromWriteBlocked && !sEepromDirty;''', '''    if (sSaveTxnDepth == 0)
+        FlushEepromFile();
+#ifdef TMC_CORE_DLL
+    if (gTmcCoreHosted && !gTmcCoreSaveWrite)
+        return !sEepromWriteBlocked;
+#endif
+    return !sEepromWriteBlocked && !sEepromDirty;'''),
+])

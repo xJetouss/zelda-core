@@ -388,7 +388,9 @@ pub struct App {
     pub(crate) qm_for_x: bool,
     l3_prev: bool,
     /// Steuerkreuz des Controllers (nur für Menüs, nicht fürs Spiel)
-    ctl_dpad: u16,
+    pub(crate) ctl_dpad: u16,
+    /// Schnellmenü über Steuerkreuz → am Controller gehalten
+    pub(crate) qm_pad: bool,
     ctl_dpad_prev: u16,
     pub(crate) game_fps_count: u32,
     pub(crate) game_fps: f64,
@@ -615,6 +617,7 @@ impl App {
             qm_for_x: false,
             l3_prev: false,
             ctl_dpad: 0,
+            qm_pad: false,
             ctl_dpad_prev: 0,
             game_fps_count: 0,
             game_fps: 0.0,
@@ -1138,9 +1141,14 @@ impl App {
 
     /// Todeszähler auf 0; `all`: auch in den Angaben aller Spielstände (nur die .meta-Dateien, der Spielstand selbst bleibt)
     pub(crate) fn reset_deaths(&mut self, all: bool) {
-        let Some(g) = &mut self.game else { return };
-        g.deaths = 0;
-        g.dying = false;
+        if let Some(g) = &mut self.game {
+            g.deaths = 0;
+            g.dying = false;
+        } else if self.gba.active() {
+            self.gba.deaths = 0;
+        } else {
+            return;
+        }
         let mut n = 0;
         if all {
             for slot in 0..=99u8 {
@@ -1163,9 +1171,6 @@ impl App {
 
     /// Spielzeit/Tode/Herzen eines Slots (zwischengespeichert, neu gelesen bei Änderung).
     pub(crate) fn slot_meta(&mut self, slot: u8) -> Option<SlotMeta> {
-        if self.gba.active() {
-            return None;
-        }
         let p = self.meta_path(slot)?;
         let mtime = std::fs::metadata(&p).and_then(|m| m.modified()).ok();
         if let Some((t, m)) = self.metas.get(&slot) {
@@ -2005,6 +2010,7 @@ impl App {
             self.qm_for_x = left && !(qm_key || qm_pad);
         }
         self.qm_held = qm_key || qm_pad || left;
+        self.qm_pad = qm_pad;
         self.qm_dir = dir;
         let dzf = |v: gfx::Vec2| { let dz = self.s.deadzone.max(0.25); let l = v.length(); if l < dz { gfx::Vec2::ZERO } else { v / l * ((l - dz) / (1.0 - dz)).min(1.0) } };
         self.lstick = dzf(lst);
@@ -2020,7 +2026,7 @@ impl App {
         }
         self.ctl_dpad = ctl_dpad;
         self.minus_now = minus;
-        if l3 && !self.l3_prev && self.game.is_some() {
+        if l3 && !self.l3_prev && (self.game.is_some() || self.gba.active()) {
             self.paused = !self.paused;
             self.msg(if self.paused { self.t("Pause", "Paused") } else { self.t("Weiter", "Resumed") });
         }

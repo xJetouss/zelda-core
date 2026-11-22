@@ -299,9 +299,9 @@ impl Core {
         }
     }
 
-    /// Item-Symbol aufnehmen: ein Bild ohne Hintergrundebenen zeichnen
-    pub fn render_without_bg(&mut self, pad: u16, frame: &mut Vec<u8>) -> Option<(usize, usize)> {
-        unsafe { (self.api.layers)(0) };
+    /// Item-Symbol aufnehmen: ein Bild nur mit den Hintergrundebenen aus `mask` zeichnen (Bit 0 = BG0 …)
+    pub fn render_layers(&mut self, mask: i32, pad: u16, frame: &mut Vec<u8>) -> Option<(usize, usize)> {
+        unsafe { (self.api.layers)(mask) };
         let r = self.run_frame(pad, frame);
         unsafe { (self.api.layers)(0x0F) };
         r

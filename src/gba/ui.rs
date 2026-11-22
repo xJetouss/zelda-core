@@ -39,11 +39,29 @@ pub struct GbaView {
     /// The Minish Cap: Symbole der Items (wie im B-Feld), leeres Y-Feld, Item-Leiste für die Y-Taste
     icons: HashMap<u8, gfx::TextureHandle>,
     y_empty: Option<gfx::TextureHandle>,
+    /// dieselben Symbole als RGBA: das Y-Feld wird ins Spielbild gesetzt (gleiche Farben und HD-Filter wie B/A)
+    icons_rgba: HashMap<u8, Vec<u8>>,
     pub bar_open: bool,
     bar_items: Vec<u8>,
     bar_sel: usize,
     bar_prev: u16,
-    bar_stick: bool,
+    /// Taste, für die die Item-Leiste offen ist: 0 = Y (Steuerkreuz ←), 1 = B (↓), 2 = A (→)
+    bar_slot: u8,
+    /// wie die Item-Leiste von A Link to the Past: kurz antippen = Leiste bleibt offen (A wählt, B bricht ab),
+    /// Wiederholen beim Halten, weiches Mitlaufen der Leiste
+    bar_held_prev: bool,
+    bar_sticky: bool,
+    bar_moved: bool,
+    bar_t0: Instant,
+    bar_nav_dir: i8,
+    bar_nav_next: Instant,
+    bar_scroll: f32,
+    /// Spielzeit (Spielbilder) und Tode wie bei A Link to the Past (stehen in den Savestate-Angaben `.meta`)
+    pub play_frames: u64,
+    pub deaths: u32,
+    last_hp: u8,
+    /// Entwicklung: Slot-Test (PASTLINK_GBA_SLOTTEST)
+    dev_tick: u32,
 }
 
 impl Default for GbaView {
@@ -68,11 +86,23 @@ impl Default for GbaView {
             hud: false,
             icons: HashMap::new(),
             y_empty: None,
+            icons_rgba: HashMap::new(),
             bar_open: false,
             bar_items: Vec::new(),
             bar_sel: 0,
             bar_prev: 0,
-            bar_stick: false,
+            bar_slot: 0,
+            bar_held_prev: false,
+            bar_sticky: false,
+            bar_moved: false,
+            bar_t0: Instant::now(),
+            bar_nav_dir: 0,
+            bar_nav_next: Instant::now(),
+            bar_scroll: 0.0,
+            play_frames: 0,
+            deaths: 0,
+            last_hp: 0,
+            dev_tick: 0,
         }
     }
 }
@@ -117,6 +147,10 @@ impl App {
                 g.save_sav = self.s.save_sram;
                 g.apply_cheats();
                 self.gba.game = Some(g);
+                self.gba.play_frames = 0;
+                self.gba.deaths = 0;
+                self.gba.last_hp = 0;
+                self.metas.clear();
                 self.gba.acc = 0.0;
                 self.gba.last = Instant::now();
                 self.gba.tex = None;
@@ -148,6 +182,7 @@ impl App {
         self.gba.back = None;
         self.gba.hist.clear();
         self.gba.icons.clear();
+        self.gba.icons_rgba.clear();
         self.gba.y_empty = None;
         self.gba.bar_open = false;
         self.thumbs.clear();
@@ -229,6 +264,18 @@ impl App {
         }
         self.gba.hud = g.hud_visible();
         self.game_fps_count += n;
+        // Spielzeit und Tode (Herzen fallen auf 0) wie bei A Link to the Past
+        if !rewinding && n > 0 {
+            self.gba.play_frames += n as u64;
+            if g.is_minish() && self.gba.tick % 8 < n {
+                if let Some(hp) = g.peek(0x0200_2AEA, 1).map(|b| b[0]) {
+                    if hp == 0 && self.gba.last_hp > 0 && self.gba.hud {
+                        self.gba.deaths += 1;
+                    }
+                    self.gba.last_hp = hp;
+                }
+            }
+        }
         // Ton: nur bei normalem Tempo (sonst würde er sich stauen)
         self.gba.abuf.clear();
         g.take_audio(&mut self.gba.abuf);
@@ -243,14 +290,28 @@ impl App {
             g.new_frame = false;
             self.gba.dirty = true;
         }
+        if std::env::var_os("PASTLINK_GBA_SLOTTEST").is_some() {
+            self.gba_slot_test();
+        }
         self.gba_upload(ctx);
     }
 
-    /// The Minish Cap: Item-Leiste für die Y-Taste (Schnellmenü-Taste halten, ←/→ oder L/R wählen, loslassen =
+    /// The Minish Cap: Item-Leiste (Steuerkreuz ← = Y, ↓ = B, → = A halten, mit Stick oder L/R wählen, loslassen =
     /// auf Y legen). Liefert die Tasten fürs Spiel und ob das Spiel steht.
     fn gba_item_bar(&mut self, ctx: &gfx::Context, pad: u16, blocked: bool) -> (u16, bool) {
         // Entwicklung: Item-Leiste offen zeigen (PASTLINK_OPEN=gbabar)
-        let held = (self.qm_held || std::env::var("PASTLINK_OPEN").is_ok_and(|v| v == "gbabar")) && !blocked;
+        // Steuerkreuz am Controller halten: ← = Y-Item, ↓ = B-Item, → = A-Item (Schnellmenü-Taste der Tastatur = Y)
+        let d = self.ctl_dpad;
+        let want = if d & (1 << 10) != 0 {
+            Some(1u8)
+        } else if self.qm_pad || d & (1 << 8) != 0 {
+            Some(2)
+        } else if d & (1 << 9) != 0 || self.qm_held || std::env::var("PASTLINK_OPEN").is_ok_and(|v| v == "gbabar") {
+            Some(0)
+        } else {
+            None
+        };
+        let held = want.is_some() && !blocked;
         let dir_x = self.qm_dir.x;
         let Some(g) = self.gba.game.as_mut() else { return (pad, blocked) };
         if !g.is_minish() {
@@ -265,7 +326,8 @@ impl App {
                 new_icons.push((0, img));
             }
         }
-        if held && !self.gba.bar_open && hud {
+        let dev_bar = std::env::var("PASTLINK_OPEN").is_ok_and(|v| v == "gbabar");
+        if held && (!self.gba.bar_held_prev || dev_bar) && !self.gba.bar_open && hud {
             self.gba.bar_items = g.owned_items();
             for &i in &self.gba.bar_items {
                 if !self.gba.icons.contains_key(&i) || (28..=31).contains(&i) {
@@ -274,9 +336,20 @@ impl App {
                     }
                 }
             }
-            self.gba.bar_sel = self.gba.bar_items.iter().position(|&i| i == g.cfg.y_item).unwrap_or(0);
+            self.gba.bar_slot = want.unwrap_or(0);
+            let cur = match self.gba.bar_slot {
+                1 => g.peek(super::minish::EQUIP_B, 1).map_or(0, |b| b[0]),
+                2 => g.peek(super::minish::EQUIP_A, 1).map_or(0, |b| b[0]),
+                _ => g.cfg.y_item,
+            };
+            self.gba.bar_sel = self.gba.bar_items.iter().position(|&i| i == cur).unwrap_or(0);
+            self.gba.bar_scroll = self.gba.bar_sel as f32;
             self.gba.bar_open = true;
             self.gba.bar_prev = pad;
+            self.gba.bar_sticky = false;
+            self.gba.bar_moved = false;
+            self.gba.bar_t0 = Instant::now();
+            self.gba.bar_nav_dir = 0;
         }
         let y = g.cfg.y_item;
         if y != 0 && !self.gba.icons.contains_key(&y) && hud {
@@ -286,32 +359,69 @@ impl App {
         }
         let mut out = (pad, blocked);
         if self.gba.bar_open {
-            let n = self.gba.bar_items.len();
+            let n = self.gba.bar_items.len().max(1);
             let pressed = pad & !self.gba.bar_prev;
             self.gba.bar_prev = pad;
-            let stick = if dir_x > 0.6 { 1 } else if dir_x < -0.6 { -1 } else { 0 };
-            let step = if pressed & (0x0200 | 0x0020) != 0 || (stick < 0 && !self.gba.bar_stick) {
-                -1
-            } else if pressed & (0x0100 | 0x0010) != 0 || (stick > 0 && !self.gba.bar_stick) {
-                1
-            } else {
-                0
-            };
-            self.gba.bar_stick = stick != 0;
-            if n > 0 && step != 0 {
-                self.gba.bar_sel = (self.gba.bar_sel as i32 + step).rem_euclid(n as i32) as usize;
+            // Richtung: Stick, L/R, Steuerkreuz ←/→ (beim Halten nicht die Richtung, die die Leiste geöffnet hat)
+            let sticky = self.gba.bar_sticky;
+            let (left, right) = (d & (1 << 9) != 0, d & (1 << 8) != 0 || self.qm_pad);
+            let use_l = sticky || self.gba.bar_slot != 0;
+            let use_r = sticky || self.gba.bar_slot != 2;
+            let mut dx = 0i8;
+            if dir_x < -0.5 || pad & 0x0020 != 0 || (use_l && left) {
+                dx = -1;
             }
-            if !held {
+            if dir_x > 0.5 || pad & 0x0010 != 0 || (use_r && right) {
+                dx = 1;
+            }
+            let now = Instant::now();
+            if dx != 0 && (dx != self.gba.bar_nav_dir || now >= self.gba.bar_nav_next) {
+                let first = dx != self.gba.bar_nav_dir;
+                self.gba.bar_sel = (self.gba.bar_sel as i32 + dx as i32).rem_euclid(n as i32) as usize;
+                self.gba.bar_moved = true;
+                self.gba.bar_nav_next = now + std::time::Duration::from_millis(if first { 300 } else { 110 });
+            }
+            self.gba.bar_nav_dir = dx;
+            let dt = ctx.input(|i| i.stable_dt).min(0.05);
+            self.gba.bar_scroll += (self.gba.bar_sel as f32 - self.gba.bar_scroll) * (1.0 - (-dt * 18.0).exp());
+            if (self.gba.bar_scroll - self.gba.bar_sel as f32).abs() > n as f32 / 2.0 {
+                self.gba.bar_scroll = self.gba.bar_sel as f32;
+            }
+            let (mut confirm, mut cancel) = (false, false);
+            if !sticky {
+                if !held && self.gba.bar_held_prev {
+                    if self.gba.bar_t0.elapsed().as_secs_f32() < 0.3 && !self.gba.bar_moved {
+                        self.gba.bar_sticky = true;
+                    } else {
+                        confirm = true;
+                    }
+                }
+            } else {
+                let own = self.gba.bar_slot == 1 && d & (1 << 10) != 0 && !self.gba.bar_held_prev;
+                confirm = pressed & (0x0080 | 0x1000) != 0 || own;
+                cancel = pressed & 0x8000 != 0;
+            }
+            if confirm {
                 self.gba.bar_open = false;
                 if let Some(&i) = self.gba.bar_items.get(self.gba.bar_sel) {
-                    g.cfg.y_item = i;
-                    g.save_cfg();
+                    match self.gba.bar_slot {
+                        1 => g.equip(false, i),
+                        2 => g.equip(true, i),
+                        _ => {
+                            g.cfg.y_item = i;
+                            g.save_cfg();
+                        }
+                    }
                 }
+            } else if cancel {
+                self.gba.bar_open = false;
             }
             out = (0, true);
         }
+        self.gba.bar_held_prev = held;
         for (i, img) in new_icons {
             let t = ctx.load_texture(format!("gba-icon-{i}"), gfx::ColorImage::from_rgba_unmultiplied([super::ICON_W, super::ICON_H], &img), gfx::TextureOptions::NEAREST);
+            self.gba.icons_rgba.insert(i, img);
             if i == 0 {
                 self.gba.y_empty = Some(t);
             } else {
@@ -321,48 +431,84 @@ impl App {
         out
     }
 
-    /// Y-Feld neben B und offene Item-Leiste zeichnen (The Minish Cap)
-    fn gba_draw_y(&self, painter: &gfx::Painter, r: gfx::Rect, gp: f32) {
+    /// Item-Leiste zeichnen (The Minish Cap), im Stil der Item-Leiste von A Link to the Past: Band mit weißer und
+    /// grüner Doppellinie, Auswahl in der Mitte, goldene Pfeile, Tastenschild (Y/B/A), Name darunter.
+    /// Das Y-Feld selbst steht im Spielbild (siehe `gba_upload`).
+    fn gba_draw_y(&self, painter: &gfx::Painter, r: gfx::Rect, _gp: f32) {
         let Some(g) = &self.gba.game else { return };
-        if !g.is_minish() || (!self.gba.hud && !self.gba.bar_open) {
+        if !g.is_minish() || !self.gba.bar_open {
             return;
         }
+        let en = self.s.ui_en;
         let uv = gfx::Rect::from_min_max(gfx::pos2(0.0, 0.0), gfx::pos2(1.0, 1.0));
-        let at = |x: f32, y: f32| gfx::pos2(r.left() + x * gp, r.top() + y * gp);
-        let size = gfx::vec2(super::ICON_W as f32 * gp, super::ICON_H as f32 * gp);
-        let tex = if g.cfg.y_item != 0 { self.gba.icons.get(&g.cfg.y_item).or(self.gba.y_empty.as_ref()) } else { self.gba.y_empty.as_ref() };
-        if let Some(t) = tex {
-            painter.image(t.id(), gfx::Rect::from_min_size(at((super::ICON_X + g.hud_dx() - 24) as f32, super::ICON_Y as f32), size), uv, Color32::WHITE);
+        painter.rect_filled(r, 0.0, Color32::from_black_alpha(120));
+        let items = &self.gba.bar_items;
+        let n = items.len().max(1);
+        let sel = self.gba.bar_sel.min(n - 1);
+        let tile = (r.height() * 0.13).clamp(56.0, 104.0);
+        let gap = tile * 0.22;
+        let step = tile + gap;
+        let cy = r.top() + r.height() * 0.40;
+        let band = gfx::Rect::from_min_max(gfx::pos2(r.left(), cy - tile * 0.95), gfx::pos2(r.right(), cy + tile * 1.15));
+        let green = Color32::from_rgb(56, 176, 72);
+        let gold = Color32::from_rgb(248, 208, 64);
+        painter.rect_filled(band, 0.0, Color32::from_rgba_unmultiplied(8, 10, 40, 225));
+        let lw = 2.0;
+        for (y, c) in [(band.top() + lw * 1.5, Color32::WHITE), (band.top() + lw * 4.0, green), (band.bottom() - lw * 1.5, Color32::WHITE), (band.bottom() - lw * 4.0, green)] {
+            painter.line_segment([gfx::pos2(band.left(), y), gfx::pos2(band.right(), y)], Stroke::new(lw, c));
         }
-        if !self.gba.bar_open {
+        // Tastenschild: für welche Taste gewählt wird
+        {
+            let (lbl, col) = match self.gba.bar_slot {
+                1 => ("B", Color32::from_rgb(190, 50, 40)),
+                2 => ("A", Color32::from_rgb(40, 90, 200)),
+                _ => ("Y", Color32::from_rgb(40, 150, 60)),
+            };
+            let bs = tile * 0.42;
+            let b = gfx::Rect::from_min_size(gfx::pos2(band.left() + bs * 0.5, band.top() + bs * 0.5), gfx::vec2(bs, bs));
+            painter.rect_filled(b, 5.0, col);
+            painter.rect_stroke(b, 5.0, Stroke::new(2.0_f32, Color32::WHITE));
+            crate::pixfont::text(painter, b.center(), gfx::Align2::CENTER_CENTER, lbl, (bs / 9.0).round().max(1.0), Color32::WHITE);
+        }
+        if items.is_empty() {
+            crate::pixfont::text(painter, gfx::pos2(band.center().x, cy), gfx::Align2::CENTER_CENTER, if en { "NO ITEMS YET" } else { "NOCH KEINE ITEMS" }, (tile / 24.0).round().max(1.0), Color32::WHITE);
             return;
         }
-        // Item-Leiste unten in der Bildmitte, im Stil der Spielmenüs
-        let n = self.gba.bar_items.len().max(1);
-        let cell = 28.0 * gp;
-        let w = n as f32 * cell + 12.0 * gp;
-        let h = cell + 26.0 * gp;
-        let panel = gfx::Rect::from_min_size(gfx::pos2(r.center().x - w / 2.0, r.bottom() - h - 8.0 * gp), gfx::vec2(w, h));
-        painter.rect_filled(panel, 4.0 * gp, Color32::from_rgba_unmultiplied(8, 10, 40, 230));
-        painter.rect_stroke(panel, 4.0 * gp, Stroke::new(gp, Color32::from_rgb(248, 208, 64)));
-        if self.gba.bar_items.is_empty() {
-            crate::pixfont::text(painter, panel.center(), gfx::Align2::CENTER_CENTER, if self.s.ui_en { "NO ITEMS YET" } else { "NOCH KEINE ITEMS" }, gp.round().max(1.0), Color32::WHITE);
-            return;
-        }
-        for (k, &i) in self.gba.bar_items.iter().enumerate() {
-            let c = gfx::Rect::from_min_size(gfx::pos2(panel.left() + 6.0 * gp + k as f32 * cell, panel.top() + 4.0 * gp), gfx::vec2(cell, cell));
-            if k == self.gba.bar_sel {
-                painter.rect_filled(c.shrink(gp), 3.0 * gp, Color32::from_rgba_unmultiplied(248, 208, 64, 70));
-                painter.rect_stroke(c.shrink(gp), 3.0 * gp, Stroke::new(gp, Color32::from_rgb(248, 208, 64)));
+        // wenige Items: alle mittig; viele: Auswahl in der Mitte, Leiste läuft im Kreis
+        let fits = n as f32 * step < r.width() * 0.9;
+        let center = if fits { (n as f32 - 1.0) / 2.0 } else { self.gba.bar_scroll };
+        for (i, &it) in items.iter().enumerate() {
+            let mut k = i as f32 - center;
+            if !fits {
+                let nf = n as f32;
+                k = (k + nf / 2.0).rem_euclid(nf) - nf / 2.0;
             }
-            if let Some(t) = self.gba.icons.get(&i) {
-                let ic = gfx::Rect::from_center_size(c.center(), gfx::vec2(super::ICON_W as f32 * gp, super::ICON_H as f32 * gp));
-                painter.image(t.id(), ic, uv, Color32::WHITE);
+            let x = r.center().x + k * step;
+            if x < r.left() - tile || x > r.right() + tile {
+                continue;
+            }
+            let is_sel = i == sel;
+            let size = if is_sel { tile * 1.18 } else { tile };
+            let c = gfx::Rect::from_center_size(gfx::pos2(x, cy), gfx::vec2(size, size));
+            painter.rect_filled(c, 4.0, Color32::from_rgb(0, 0, 8));
+            painter.rect_stroke(c, 4.0, Stroke::new(2.0_f32, Color32::WHITE));
+            painter.rect_stroke(c.shrink(4.0), 2.0, Stroke::new(if is_sel { 3.0_f32 } else { 2.0 }, if is_sel { gold } else { green }));
+            if let Some(t) = self.gba.icons.get(&it) {
+                let ih = size * 0.76;
+                let ic = gfx::Rect::from_center_size(c.center(), gfx::vec2(ih * super::ICON_W as f32 / super::ICON_H as f32, ih));
+                painter.image(t.id(), ic, uv, if is_sel { Color32::WHITE } else { Color32::from_gray(200) });
             }
         }
-        if let Some(&i) = self.gba.bar_items.get(self.gba.bar_sel) {
-            let txt = super::minish::name(i, self.s.ui_en).to_uppercase();
-            crate::pixfont::text(painter, gfx::pos2(panel.center().x, panel.bottom() - 11.0 * gp), gfx::Align2::CENTER_CENTER, &txt, gp.round().max(1.0), Color32::WHITE);
+        // Auswahl-Pfeile wie im Spiel (wippen leicht)
+        let sr = gfx::Rect::from_center_size(gfx::pos2(r.center().x + (if fits { sel as f32 - center } else { 0.0 }) * step, cy), gfx::vec2(tile * 1.18, tile * 1.18));
+        let bob = (self.gba.bar_t0.elapsed().as_secs_f32() * 6.0).sin() * 3.0;
+        for (dir, xx) in [(-1.0f32, sr.left() - 12.0 + bob), (1.0, sr.right() + 12.0 - bob)] {
+            let tip = gfx::pos2(xx + dir * 8.0, cy);
+            painter.add(gfx::Shape::convex_polygon(vec![tip, gfx::pos2(xx, cy - 9.0), gfx::pos2(xx, cy + 9.0)], gold, Stroke::NONE));
+        }
+        if let Some(&it) = items.get(sel) {
+            let name = super::minish::name(it, en);
+            painter.text(gfx::pos2(r.center().x, band.bottom() + 18.0), gfx::Align2::CENTER_TOP, name, gfx::FontId::monospace((tile * 0.27).clamp(16.0, 26.0)), Color32::WHITE);
         }
     }
 
@@ -381,7 +527,24 @@ impl App {
             std::mem::swap(&mut self.gba.prev, &mut self.gba.cur);
             let lut = &self.lut;
             self.gba.cur.clear();
-            self.gba.cur.extend(g.frame.chunks_exact(4).map(|p| lut[((p[0] >> 3) as usize) | ((p[1] >> 3) as usize) << 5 | ((p[2] >> 3) as usize) << 10]));
+            let col = |p: &[u8]| lut[((p[0] >> 3) as usize) | ((p[1] >> 3) as usize) << 5 | ((p[2] >> 3) as usize) << 10];
+            self.gba.cur.extend(g.frame.chunks_exact(4).map(col));
+            // Y-Feld links neben B ins Bild setzen (geht dann wie B/A durch Farbtabelle und HD-Filter)
+            if self.gba.hud && g.is_minish() && self.gba.cur.len() == w * h {
+                let id = if g.cfg.y_item != 0 && self.gba.icons_rgba.contains_key(&g.cfg.y_item) { g.cfg.y_item } else { 0 };
+                if let Some(img) = self.gba.icons_rgba.get(&id) {
+                    let x0 = super::ICON_X + g.hud_dx() - 24;
+                    for y in 0..super::ICON_H {
+                        for x in 0..super::ICON_W {
+                            let o = (y * super::ICON_W + x) * 4;
+                            let (fx, fy) = (x0 + x, super::ICON_Y + y);
+                            if img[o + 3] != 0 && fx < w && fy < h {
+                                self.gba.cur[fy * w + fx] = col(&img[o..o + 4]);
+                            }
+                        }
+                    }
+                }
+            }
             if self.gba.prev.len() != self.gba.cur.len() {
                 self.gba.prev.clone_from(&self.gba.cur);
             }
@@ -431,8 +594,10 @@ impl App {
             };
             g.set_view(vw, vh, self.s.widescreen != 0);
             if g.loading() {
-                let gp = (area.height() / 160.0).round().max(1.0);
                 let txt = tr(en, "RECOMP STARTET ... (BEIM ERSTEN MAL ETWA 20 S)", "RECOMP STARTING ... (ABOUT 20 S THE FIRST TIME)");
+                // so groß wie möglich, aber immer ganz im Fenster
+                let fit = area.width() * 0.9 / crate::pixfont::width(txt, 1.0).max(1.0);
+                let gp = (area.height() / 160.0).round().min(fit.floor()).max(1.0);
                 crate::pixfont::text(painter, area.center(), gfx::Align2::CENTER_CENTER, txt, gp, Color32::WHITE);
                 return;
             }
@@ -538,6 +703,14 @@ impl App {
         if let (true, Some(t)) = (r.is_ok(), g.thumb()) {
             let _ = std::fs::write(g.path.with_extension(format!("{}{slot}.thumb", if rc { "rs" } else { "gs" })), lz4_flex::compress_prepend_size(&t));
         }
+        // Angaben wie bei A Link to the Past: Spielzeit, Tode, Herzen, Rubine
+        if r.is_ok() {
+            let meta = self.gba_meta();
+            if let Some(mp) = self.meta_path(slot) {
+                let _ = std::fs::write(mp, serde_json::to_string(&meta).unwrap_or_default());
+            }
+            self.metas.remove(&slot);
+        }
         self.slot = slot;
         self.thumbs.remove(&slot);
         let m = match r {
@@ -552,19 +725,90 @@ impl App {
         self.slot = slot;
         let Some(g) = &mut self.gba.game else { return };
         let rc = g.is_rc();
-        let ok = std::fs::read(super::state_path(&g.path, slot, rc))
-            .ok()
-            .and_then(|b| if rc { lz4_flex::decompress_size_prepended(&b).ok() } else { Some(b) })
-            .map(|b| g.load_state(&b))
-            .unwrap_or(false);
+        let file = std::fs::read(super::state_path(&g.path, slot, rc)).ok();
+        let exists = file.is_some();
+        let ok = file.and_then(|b| if rc { lz4_flex::decompress_size_prepended(&b).ok() } else { Some(b) }).map(|b| g.load_state(&b)).unwrap_or(false);
         if ok {
             self.gba.hist.clear();
             g.run_frame(0);
             let mut skip = Vec::new();
             g.take_audio(&mut skip);
+            self.gba.last_hp = 0;
+            if let Some(m) = self.slot_meta(slot) {
+                self.gba.play_frames = m.play_frames;
+                self.gba.deaths = m.deaths;
+            }
         }
-        let m = if ok { format!("{} {slot} {}", self.t("Spielstand", "Save state"), self.t("geladen", "loaded")) } else { format!("{} {slot} {}", self.t("Spielstand", "Save state"), self.t("ist leer", "is empty")) };
+        let m = if ok {
+            format!("{} {slot} {}", self.t("Spielstand", "Save state"), self.t("geladen", "loaded"))
+        } else if exists {
+            // Picori-Stände passen nur zu der tmc_core.dll, mit der sie gespeichert wurden
+            format!("{} {slot}: {}", self.t("Spielstand", "Save state"), self.t("stammt von einer anderen Recomp-Fassung und lässt sich nicht laden", "was saved by a different Recomp version and can't be loaded"))
+        } else {
+            format!("{} {slot} {}", self.t("Spielstand", "Save state"), self.t("ist leer", "is empty"))
+        };
         self.msg(m);
+    }
+
+    /// Entwicklung: Slot 3 speichern, weiterspielen, laden; Ergebnis in `slottest.txt` neben der .exe, danach das
+    /// Spielstand-Menü öffnen
+    fn gba_slot_test(&mut self) {
+        let Some(g) = &self.gba.game else { return };
+        if g.loading() {
+            return;
+        }
+        self.gba.dev_tick += 1;
+        let t = self.gba.dev_tick;
+        let log = |m: String| {
+            if let Some(p) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("slottest.txt"))) {
+                let old = std::fs::read_to_string(&p).unwrap_or_default();
+                let _ = std::fs::write(p, old + &m + "
+");
+            }
+        };
+        if t == 100 {
+            let g = self.gba.game.as_ref().unwrap();
+            log(format!("hud {} w {} h {} dx {} y_item {} icons {:?}", self.gba.hud, g.w, g.h, g.hud_dx(), g.cfg.y_item, self.gba.icons_rgba.keys().collect::<Vec<_>>()));
+        }
+        if t == 120 {
+            self.gba.deaths = 2;
+            self.gba_save_slot(3);
+            let g = self.gba.game.as_ref().unwrap();
+            let meta = self.meta_path(3).and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+            let thumb = std::fs::metadata(g.path.with_extension(format!("{}3.thumb", if g.is_rc() { "rs" } else { "gs" }))).map(|m| m.len()).unwrap_or(0);
+            let st = std::fs::metadata(super::state_path(&g.path, 3, g.is_rc())).map(|m| m.len()).unwrap_or(0);
+            log(format!("gespeichert: Stand {st} B, Bild {thumb} B, meta {meta}"));
+            log(format!("Meldung: {:?}", self.status.as_ref().map(|s| s.0.clone())));
+            let g = self.gba.game.as_ref().unwrap();
+            log(format!("frame@save {}", g.frame.iter().map(|&b| b as u64).sum::<u64>()));
+        }
+        if t == 300 {
+            let before = self.gba.play_frames;
+            self.gba.deaths = 0;
+            self.gba_load_slot(3);
+            let g = self.gba.game.as_ref().unwrap();
+            log(format!("geladen: Meldung {:?}, Spielzeit vorher {before} nachher {}, Tode {}", self.status.as_ref().map(|s| s.0.clone()), self.gba.play_frames, self.gba.deaths));
+            log(format!("frame@load {}", g.frame.iter().map(|&b| b as u64).sum::<u64>()));
+            let m = self.slot_meta(3);
+            log(format!("slot_meta: {:?}", m.map(|m| (m.play_frames, m.deaths, m.health, m.max_health, m.rupees))));
+            self.win_states = std::env::var("PASTLINK_GBA_SLOTTEST").is_ok_and(|v| v == "menu");
+            self.slot = 3;
+        }
+    }
+
+    /// Angaben eines Savestates (Spielzeit, Tode, Herzen, Rubine) wie bei A Link to the Past
+    pub(crate) fn gba_meta(&self) -> crate::app::SlotMeta {
+        let mut m = crate::app::SlotMeta { play_frames: self.gba.play_frames, deaths: self.gba.deaths, ..Default::default() };
+        let Some(g) = &self.gba.game else { return m };
+        m.fps = g.fps;
+        if g.is_minish() {
+            if let Some(b) = g.peek(0x0200_2AEA, 0x18) {
+                m.health = b[0];
+                m.max_health = b[1];
+                m.rupees = Some(u16::from_le_bytes([b[0x16], b[0x17]]));
+            }
+        }
+        m
     }
 
     /// Zeit des Spielstands (für das Menü), None = leer

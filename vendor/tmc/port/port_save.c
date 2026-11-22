@@ -590,6 +590,10 @@ int Port_Save_EndTransaction(void) {
         sSaveTxnDepth--;
     if (sSaveTxnDepth == 0)
         FlushEepromFile();
+#ifdef TMC_CORE_DLL
+    if (gTmcCoreHosted && !gTmcCoreSaveWrite)
+        return !sEepromWriteBlocked;
+#endif
     return !sEepromWriteBlocked && !sEepromDirty;
 }
 

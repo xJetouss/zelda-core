@@ -14,6 +14,8 @@ unverändert.
 - `port/port_audio.c`: Kein eigenes Audiogerät. Zelda Core holt den gemischten Ton je Spielbild ab.
 - `port/port_save.c`: Der Spielstand liegt als `<rom>.sav` neben der ROM (mGBA-Format) und wird nur geschrieben,
   wenn Zelda Core es erlaubt. Pfade dürfen bis 1024 Zeichen lang sein.
+- `port/port_rom.c`: Keine einzelnen ROM-Seiten unter `rom_data/` lesen oder schreiben (die ganze ROM liegt im
+  Speicher). Das spart bei jedem Start mehrere Sekunden.
 - `port/port_exe_path.cpp`: Entpackte Grafiken und Töne liegen im Arbeitsordner (`minish` neben `zelda-core.exe`).
 - `port/port_quicksave.c`: Funktionen für Savestates im Speicher (in Zelda Core derzeit nicht benutzt; Savestates
   sichern dort alle Spielvariablen über die Abschnitte `.tmcd`/`.tmcb`).

@@ -203,6 +203,10 @@ static void ExtractPage(u32 page) {
         return;
     if (IsPageExtracted(page))
         return;
+#ifdef TMC_CORE_DLL
+    MarkPageExtracted(page);
+    return;
+#endif
 
     u32 offset = page << ROM_PAGE_SHIFT;
     u32 size = ROM_PAGE_SIZE;
@@ -1295,7 +1299,11 @@ void Port_LoadRom(const char* path) {
     memset(sExtractedPages, 0, sizeof(sExtractedPages));
 
     /* ---- Step 1: try loading from rom_data/ extracted pages ---- */
+#ifdef TMC_CORE_DLL
+    int pagesLoaded = 0;
+#else
     int pagesLoaded = LoadExtractedPages();
+#endif
     if (pagesLoaded > 0) {
         fprintf(stderr, "ROM data: loaded %d extracted pages from " ROM_EXTRACT_DIR "/\n", pagesLoaded);
     }

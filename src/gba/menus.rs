@@ -225,13 +225,149 @@ impl Root {
         let t = move |d: &'static str, e: &'static str| tr(en, d, e);
         let mut v = Vec::new();
         if matches!(game_code(self).as_str(), "BZMP" | "BZME") {
-            let mut rows = Vec::new();
-            for (k, (de, e, code)) in MINISH_EU.iter().enumerate() {
-                let on = self.app.gba.game.as_ref().is_some_and(|g| g.cfg.cheats.iter().any(|c| c.code == *code && c.on));
-                let text = div().flex().flex_col().gap(px(2.0)).child(strong(if en { *e } else { *de })).child(div().font_family(MONO_FONT).text_size(px(11.0)).text_color(col::dim()).child(code.replace('\n', "  +  ")));
-                rows.push(switch(format!("gba-pw-{k}"), text, on, true, cx, move |r| gba_toggle_preset(r, k)).into_any_element());
+            // wie bei A Link to the Past: Abschnitte, Schalter in zwei Spalten, Werte direkt einstellbar
+            let preset = |r: &mut Root, k: usize, cx: &mut Context<Root>| {
+                let (de, e, code) = MINISH_EU[k];
+                let on = r.app.gba.game.as_ref().is_some_and(|g| g.cfg.cheats.iter().any(|c| c.code == code && c.on));
+                switch(format!("gba-pw-{k}"), if en { e } else { de }, on, true, cx, move |r| gba_toggle_preset(r, k)).into_any_element()
+            };
+            // Spielwerte ab 0x02002AE8 (Geldbörse, Herzen, Bomben, Pfeile, A/B, Rubine, Muscheln)
+            let mem = self.app.gba.game.as_ref().and_then(|g| g.peek(0x0200_2AE8, 0x1C));
+            let has = mem.is_some();
+            let tode = self.app.gba.deaths;
+            v.push(
+                section(
+                    t("Tode", "Deaths"),
+                    vec![
+                        small(format!("{}: {tode}", t("Tode im laufenden Spiel", "Deaths in the current game"))).into_any_element(),
+                        row()
+                            .pt(px(4.0))
+                            .gap(px(8.0))
+                            .child(button("gba-d-reset", t("Tode zurücksetzen", "Reset deaths"), true, cx, |r| r.app.reset_deaths(false)))
+                            .child(button("gba-d-reset-all", t("… auch in allen Spielständen", "… also in all save states"), true, cx, |r| r.app.reset_deaths(true)))
+                            .into_any_element(),
+                    ],
+                )
+                .into_any_element(),
+            );
+            let player = vec![preset(self, 0, cx), preset(self, 1, cx), preset(self, 7, cx)];
+            let mut pl = vec![grid(2, player, 12.0).into_any_element()];
+            if let Some(m) = &mem {
+                let cap = (m[3] / 8).clamp(1, 20) as f64;
+                let cur = m[2] as f64 / 8.0;
+                let line = |txt: &str, s: Div| row().child(div().w(px(200.0)).flex_none().child(txt.to_string())).child(s).into_any_element();
+                let s1 = slider(self, "gba-hearts-cap", "", cap, 1.0, 20.0, 1.0, format!("{}", cap as u32), true, cx, |r, x| {
+                    if let Some(g) = r.app.gba.game.as_mut() {
+                        let cap = (x.round() as u32 * 8) as u8;
+                        let hp = g.peek(0x0200_2AEA, 1).map_or(cap, |b| b[0].min(cap));
+                        g.poke(0x0200_2AEA, &[hp, cap]);
+                    }
+                });
+                pl.push(line(t("Herzcontainer", "Heart containers"), s1));
+                let s2 = slider(self, "gba-hearts-cur", "", cur, 0.25, cap, 0.25, format!("{cur:.2}"), true, cx, |r, x| {
+                    if let Some(g) = r.app.gba.game.as_mut() {
+                        let cap = g.peek(0x0200_2AEB, 1).map_or(24, |b| b[0]) as u32;
+                        g.poke(0x0200_2AEA, &[((x * 8.0).round() as u32).clamp(2, cap.max(2)) as u8]);
+                    }
+                });
+                pl.push(line(t("Aktuelle Herzen", "Current hearts"), s2));
             }
-            v.push(section(t("Fertige Cheats – The Minish Cap", "Ready-made cheats – The Minish Cap"), rows).into_any_element());
+            v.push(section(t("Spieler", "Player"), pl).into_any_element());
+            let inv = vec![preset(self, 2, cx), preset(self, 3, cx), preset(self, 4, cx), preset(self, 5, cx), preset(self, 6, cx)];
+            let mut ib = vec![grid(2, inv, 12.0).into_any_element()];
+            ib.push(
+                row()
+                    .pt(px(4.0))
+                    .gap(px(8.0))
+                    .child(button("gba-give-all", t("Alle Items geben", "Give all items"), has, cx, move |r| {
+                        if let Some(g) = r.app.gba.game.as_mut() {
+                            g.run_once(MINISH_EU[6].2);
+                        }
+                        r.app.msg(tr(en, "Alle Items erhalten", "All items given"));
+                    }))
+                    .child(button("gba-give-tech", t("Alle Schwerttechniken", "All sword techniques"), has, cx, move |r| {
+                        if let Some(g) = r.app.gba.game.as_mut() {
+                            g.run_once(MINISH_EU[7].2);
+                        }
+                        r.app.msg(tr(en, "Alle Schwerttechniken erhalten", "All sword techniques given"));
+                    }))
+                    .child(button("gba-give-20", t("20 Herzcontainer", "20 heart containers"), has, cx, move |r| {
+                        if let Some(g) = r.app.gba.game.as_mut() {
+                            g.poke(0x0200_2AEA, &[0xA0, 0xA0]);
+                        }
+                        r.app.msg(tr(en, "20 Herzen", "20 hearts"));
+                    }))
+                    .into_any_element(),
+            );
+            if let Some(m) = &mem {
+                let cell = |txt: &str, d: Div| row().justify_between().child(div().text_color(col::dim()).child(txt.to_string())).child(d).into_any_element();
+                let u16at = |o: usize| u16::from_le_bytes([m[o], m[o + 1]]) as f64;
+                let w16 = |addr: u32| {
+                    move |r: &mut Root, x: f64| {
+                        if let Some(g) = r.app.gba.game.as_mut() {
+                            g.poke(addr, &(x.round().clamp(0.0, 999.0) as u16).to_le_bytes());
+                        }
+                    }
+                };
+                let w8 = |addr: u32| {
+                    move |r: &mut Root, x: f64| {
+                        if let Some(g) = r.app.gba.game.as_mut() {
+                            g.poke(addr, &[x.round().clamp(0.0, 99.0) as u8]);
+                        }
+                    }
+                };
+                let counts = vec![
+                    cell(t("Rubine", "Rupees"), drag_value("gba-dv-rupees", u16at(0x18), 0.0, 999.0, true, cx, w16(0x0200_2B00))),
+                    cell(t("Muscheln", "Shells"), drag_value("gba-dv-shells", u16at(0x1A), 0.0, 999.0, true, cx, w16(0x0200_2B02))),
+                    cell(t("Bomben", "Bombs"), drag_value("gba-dv-bombs", m[4] as f64, 0.0, 99.0, true, cx, w8(0x0200_2AEC))),
+                    cell(t("Pfeile", "Arrows"), drag_value("gba-dv-arrows", m[5] as f64, 0.0, 99.0, true, cx, w8(0x0200_2AED))),
+                ];
+                ib.push(sep().into_any_element());
+                ib.push(grid(2, counts, 18.0).into_any_element());
+            }
+            v.push(section(t("Inventar", "Inventory"), ib).into_any_element());
+            // Ausrüstung: Items auf A, B und Y (wie die Item-Leiste im Spiel: Steuerkreuz → / ↓ / ←)
+            let eq = match (&mem, self.app.gba.game.as_ref()) {
+                (Some(m), Some(g)) => Some((m[0xC], m[0xD], g.cfg.y_item, g.owned_items())),
+                _ => None,
+            };
+            if let Some((a_cur, b_cur, y_cur, owned)) = eq {
+                let mut row_eq = wrap_row();
+                for (k, (lbl, cur)) in [("A", a_cur), ("B", b_cur), ("Y", y_cur)].into_iter().enumerate() {
+                    let mut list: Vec<u8> = vec![0];
+                    list.extend(owned.iter().copied());
+                    let name = move |i: u8| if i == 0 { tr(en, "Nichts", "Nothing").to_string() } else { crate::gba::minish::name(i, en).to_string() };
+                    let opts: Vec<(String, bool)> = list.iter().map(|&i| (name(i), i == cur)).collect();
+                    let cb = combo(self, &format!("gba-eq-{k}"), name(cur), 170.0, opts, cx, move |r, i| {
+                        let item = list[i];
+                        if let Some(g) = r.app.gba.game.as_mut() {
+                            match k {
+                                0 => g.equip(true, item),
+                                1 => g.equip(false, item),
+                                _ => {
+                                    g.cfg.y_item = item;
+                                    g.save_cfg();
+                                }
+                            }
+                        }
+                    });
+                    row_eq = row_eq.child(row().gap(px(6.0)).child(strong(lbl)).child(cb));
+                }
+                v.push(
+                    section(
+                        t("Ausrüstung", "Equipment"),
+                        vec![
+                            row_eq.into_any_element(),
+                            small(t(
+                                "Im Spiel am Controller: Steuerkreuz ↓ halten = Item für B, → = für A, ← = für Y. Mit Stick, L/R oder ←/→ wählen, loslassen = ausrüsten. Kurz antippen: Leiste bleibt offen, A wählt, B bricht ab.",
+                                "In game on a controller: hold d-pad ↓ = item for B, → = for A, ← = for Y. Pick with the stick, L/R or ←/→, release to equip. Tap briefly: the bar stays open, A picks, B cancels.",
+                            ))
+                            .into_any_element(),
+                        ],
+                    )
+                    .into_any_element(),
+                );
+            }
         }
         let cheats = self.app.gba.game.as_ref().map(|g| g.cfg.cheats.clone()).unwrap_or_default();
         let mut rows = Vec::new();
@@ -253,7 +389,7 @@ impl Root {
             });
             rows.push(row().gap(px(10.0)).child(div().flex_1().min_w(px(0.0)).child(sw)).child(del).into_any_element());
         }
-        v.push(section(t("Eigene Cheats", "Own cheats"), rows).into_any_element());
+        v.push(section(t("Eigene Cheats und Codes", "Own cheats and codes"), rows).into_any_element());
         let name = self.app.gba.cheat_name.clone();
         let code = self.app.gba.cheat_code.clone();
         let add = vec![

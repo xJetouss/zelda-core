@@ -19,6 +19,8 @@ pub const ICON_X: usize = 174;
 pub const ICON_Y: usize = 8;
 pub const ICON_W: usize = 24;
 pub const ICON_H: usize = 28;
+/// Picori: Hintergrundebenen beim Aufnehmen der Item-Symbole (0 = nur Figuren)
+pub const ICON_LAYERS: i32 = 0;
 
 /// Ist der GBA-Kern eingebaut?
 pub fn available() -> bool {
@@ -393,7 +395,7 @@ mod running {
         pub fn run_frame(&mut self, pad: u16) {
             let pad = self.y_step(pad);
             if self.rc.is_some() {
-                self.rc_frame(pad, false);
+                self.rc_frame(pad, None);
                 return;
             }
             if let Ok(mut s) = core::ST.lock() {
@@ -420,7 +422,7 @@ mod running {
         }
 
         /// Picori: ein Spielbild (Cheats vorher in den Speicher schreiben, wie es mGBA je Bild tut)
-        fn rc_frame(&mut self, pad: u16, no_bg: bool) {
+        pub(super) fn rc_frame(&mut self, pad: u16, layers: Option<i32>) {
             let write = self.save_sav && !self.no_save;
             let lines: Vec<String> = self.cheat_lines();
             let sav = self.path.with_extension("sav");
@@ -439,7 +441,10 @@ mod running {
                     cell.borrow_mut().write(a, b);
                 });
             }
-            let r = if no_bg { c.render_without_bg(pad, &mut self.frame) } else { c.run_frame(pad, &mut self.frame) };
+            let r = match layers {
+                Some(m) => c.render_layers(m, pad, &mut self.frame),
+                None => c.run_frame(pad, &mut self.frame),
+            };
             if let Some((w, h)) = r {
                 self.w = w;
                 self.h = h;
@@ -603,8 +608,8 @@ mod running {
             if self.rc.is_some() {
                 // Picori: Item auf B, zwei Bilder ohne Hintergründe, B-Feld ausschneiden
                 if self.poke(minish::EQUIP_B, &[item]) {
-                    self.rc_frame(0, true);
-                    self.rc_frame(0, true);
+                    self.rc_frame(0, Some(ICON_LAYERS));
+                    self.rc_frame(0, Some(ICON_LAYERS));
                     let dx = self.hud_dx();
                     if self.frame.len() >= self.w * self.h * 4 && self.h == H {
                         let mut out = vec![0u8; ICON_W * ICON_H * 4];
@@ -696,6 +701,32 @@ mod running {
 
         /// Bytes in den Arbeitsspeicher (EWRAM 0x02000000..0x0203FFFF) schreiben – über den Spielstand (enthält das
         /// RAM ab Versatz 0x21000), weil der Kern keinen direkten Speicherzugriff anbietet
+        /// Cheat-Zeilen einmal ausführen (Knöpfe im Cheat-Menü, z. B. „Alle Items geben“)
+        pub fn run_once(&mut self, code: &str) {
+            let lines: Vec<&str> = code.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+            let mut writes: Vec<(u32, Vec<u8>)> = Vec::new();
+            {
+                let this = &*self;
+                let pending = std::cell::RefCell::new(&mut writes);
+                super::run_cheat_lines(&lines, |a, n| this.peek(a, n), |a, b| pending.borrow_mut().push((a, b.to_vec())));
+            }
+            let refs: Vec<(u32, &[u8])> = writes.iter().map(|(a, b)| (*a, b.as_slice())).collect();
+            self.poke_many(&refs);
+        }
+
+        /// The Minish Cap: Item auf A (`a`) oder B legen; liegt es schon auf der anderen Taste, tauschen beide (wie
+        /// im Item-Menü des Spiels)
+        pub fn equip(&mut self, a: bool, item: u8) {
+            let (this, other) = if a { (minish::EQUIP_A, minish::EQUIP_B) } else { (minish::EQUIP_B, minish::EQUIP_A) };
+            let Some(cur) = self.peek(minish::EQUIP_A, 2) else { return };
+            let (old_this, old_other) = if a { (cur[0], cur[1]) } else { (cur[1], cur[0]) };
+            if old_other == item {
+                self.poke_many(&[(this, &[item][..]), (other, &[old_this][..])]);
+            } else {
+                self.poke(this, &[item]);
+            }
+        }
+
         pub fn poke(&mut self, addr: u32, bytes: &[u8]) -> bool {
             self.poke_many(&[(addr, bytes)])
         }
@@ -1105,6 +1136,117 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
         let b = g.peek(minish::EQUIP_B, 1).unwrap()[0];
         println!("B nach Y: {b}");
         assert_eq!(b, 0);
+    }
+
+    /// Picori: Spielstand `GBA_RC_STATE` (gepackter .rs-Stand) laden, Anzeige oben rechts je Hintergrundebene und
+    /// Item-Symbole aufnehmen (`PASTLINK_OUT`)
+    #[test]
+    #[ignore]
+    fn dev_rc_icons() {
+        let (Ok(p), Ok(st)) = (std::env::var("PASTLINK_GBA_ROM"), std::env::var("GBA_RC_STATE")) else { return };
+        let out = std::env::var("PASTLINK_OUT").unwrap_or_else(|_| ".".into());
+        let mut g = Gba::load_with(Path::new(&p), true, false).unwrap();
+        let t0 = std::time::Instant::now();
+        while g.loading() {
+            g.run_frame(0);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            assert!(t0.elapsed().as_secs() < 60, "Picori startet nicht");
+        }
+        println!("bereit nach {:.1} s", t0.elapsed().as_secs_f32());
+        let raw = std::fs::read(&st).ok().and_then(|b| lz4_flex::decompress_size_prepended(&b).ok());
+        if !raw.is_some_and(|r| g.load_state(&r)) {
+            // kein passender Stand: mit dem Spielstand der .sav ins Spiel (A/Start drücken, bis die Anzeige da ist)
+            println!("Stand passt nicht – spiele ins Spiel");
+            let mut f = 0u32;
+            // Tastenfolge aus GBA_KEYS: „taste:bild,…“ (s=Start, a=A, u/d/l/r), danach A alle 40 Bilder
+            let script: Vec<(u16, u32)> = std::env::var("GBA_KEYS").unwrap_or_default().split(',').filter_map(|e| {
+                let (k, at) = e.split_once(':')?;
+                let bit = match k { "s" => 0x1000, "a" => 0x0080, "b" => 0x8000, "u" => 0x0800, "d" => 0x0400, "l" => 0x0200, "r" => 0x0100, _ => return None };
+                Some((bit, at.parse().ok()?))
+            }).collect();
+            let minf: u32 = std::env::var("GBA_MINF").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+            let last = script.iter().map(|s| s.1).max().unwrap_or(0);
+            while !(g.hud_visible() && f >= minf) {
+                let k = if f <= last + 3 {
+                    script.iter().filter(|(_, at)| f >= *at && f < at + 3).fold(0, |a, (b, _)| a | b)
+                } else if f % 25 < 3 { 0x0080 } else { 0 };
+                g.run_frame(k);
+                f += 1;
+                if f % std::env::var("GBA_DUMP").ok().and_then(|v| v.parse().ok()).unwrap_or(1000u32) == 0 {
+                    let px: Vec<crate::gfx::Color32> = g.frame.chunks_exact(4).map(|c| crate::gfx::Color32::from_rgb(c[0], c[1], c[2])).collect();
+                    crate::devtest::bmp(&format!("{out}/walk{f:05}.bmp"), g.w, g.h, &px);
+                }
+                assert!(f < std::env::var("GBA_MAXF").ok().and_then(|v| v.parse().ok()).unwrap_or(6000u32), "nicht ins Spiel gekommen");
+            }
+            println!("im Spiel nach {f} Bildern");
+            for _ in 0..400 {
+                g.run_frame(0);
+            }
+            g.run_once("22002B32 5554
+22002B34 5555
+22002B36 5554
+22002B38 5500");
+            g.run_frame(0);
+            let own = g.owned_items();
+            println!("Items: {own:?}");
+            g.equip(false, own[own.len() / 2]);
+            g.equip(true, own[1]);
+            for _ in 0..30 {
+                g.run_frame(0);
+            }
+            let b = g.save_state().unwrap();
+            std::fs::write(&st, lz4_flex::compress_prepend_size(&b)).unwrap();
+        }
+        for _ in 0..20 {
+            g.run_frame(0);
+        }
+        let dump = |g: &Gba, name: &str| {
+            let px: Vec<crate::gfx::Color32> = g.frame.chunks_exact(4).map(|c| crate::gfx::Color32::from_rgb(c[0], c[1], c[2])).collect();
+            crate::devtest::bmp(&format!("{out}/{name}.bmp"), g.w, g.h, &px);
+        };
+        dump(&g, "rc_full");
+        println!("Bild {}x{}, hud {}, B={:?} A={:?}", g.w, g.h, g.hud_visible(), g.peek(minish::EQUIP_B, 1), g.peek(minish::EQUIP_A, 1));
+        let st2 = g.save_state().unwrap();
+        // Item-Symbole (wie fürs Y-Feld): leeres Feld, einige Items
+        let own = g.owned_items();
+        let mut icons = Vec::new();
+        for &i in [0u8].iter().chain(own.iter().take(7)) {
+            if let Some(mut img) = g.capture_icon(i) {
+                if i == 0 {
+                    super::ui::letter_y(&mut img);
+                }
+                icons.push(img);
+            }
+        }
+        let mut px = Vec::new();
+        for y in 0..ICON_H {
+            for img in &icons {
+                for x in 0..ICON_W {
+                    let o = (y * ICON_W + x) * 4;
+                    px.push(if img[o + 3] == 0 { crate::gfx::Color32::from_rgb(255, 0, 255) } else { crate::gfx::Color32::from_rgb(img[o], img[o + 1], img[o + 2]) });
+                }
+            }
+        }
+        crate::devtest::bmp(&format!("{out}/rc_icons.bmp"), ICON_W * icons.len().max(1), ICON_H, &px);
+        for m in [0, 1, 2, 4, 8] {
+            g.rc_frame(0, Some(m));
+            g.rc_frame(0, Some(m));
+            dump(&g, &format!("rc_layer{m}"));
+            g.load_state(&st2);
+        }
+        // Item-Menü (Start)
+        for f in 0..90 {
+            g.run_frame(if f < 3 { 0x1000 } else { 0 });
+        }
+        dump(&g, "rc_menu");
+        println!("Menü: hud {}", g.hud_visible());
+        g.load_state(&st2);
+        // Spielstand speichern/laden: gleicher Stand, gleiche Bilder
+        g.run_frame(0);
+        let a = g.frame.clone();
+        g.load_state(&st2);
+        g.run_frame(0);
+        assert_eq!(a, g.frame, "Laden ergibt ein anderes Bild");
     }
 
     /// Erkennung der Spielanzeige: Logo (weiß), Titel, Spiel (`GBA_STATE`), Item-Menü
