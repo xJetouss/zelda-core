@@ -1393,6 +1393,9 @@ extern "C" void Port_PPU_PresentFrame(void) {
     const uint8_t coreDispHi = gIoMem[0x01];
     if (gTmcCoreHosted)
         gIoMem[0x01] = (uint8_t)(coreDispHi & ~(~gTmcCoreLayers & 0x0F));
+    const uint16_t coreBackdrop = gBgPltt[0];
+    if (gTmcCoreHosted && gTmcCoreLayers != 0x0F)
+        gBgPltt[0] = 0x7C1F;
 #endif
 
     dispcnt = (uint16_t)(gIoMem[0x00] | (gIoMem[0x01] << 8));
@@ -1550,6 +1553,7 @@ extern "C" void Port_PPU_PresentFrame(void) {
     /* Zelda Core zeigt das Bild selbst an (eigene Filter/Upscaler) */
     if (gTmcCoreHosted) {
         gIoMem[0x01] = coreDispHi;
+        gBgPltt[0] = coreBackdrop;
         TmcCore_Present(virtuappu_frame_buffer, virtuappu_registers.frame_width, MODE1_GBA_HEIGHT, MODE1_GBA_WIDTH);
         return;
     }

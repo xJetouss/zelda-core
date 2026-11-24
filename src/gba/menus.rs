@@ -27,6 +27,18 @@ pub(super) const MINISH_EU: &[(&str, &str, &str)] = &[
 22002AF6 2020
 22002AF8 2020"),
     ("Alle Schwerttechniken", "All sword techniques", "22002B44 5555"),
+    // Weltkarte (Item 71 = Bits 6/7 von Inventar-Byte 17; Kartenseite im Item-Menü: L) und je Dungeon Karte, Großer
+    // Schlüssel und Kompass
+    // (gSave.dungeonItems, Bits 1/2/4)
+    ("Weltkarte und alle Dungeon-Karten, Kompasse, Große Schlüssel", "World map and all dungeon maps, compasses, big keys", "22002B42 4000
+22002EAC 0707
+22002EAE 0707
+22002EB0 0707
+22002EB2 0707
+22002EB4 0707
+22002EB6 0707
+22002EB8 0707
+22002EBA 0707"),
 ];
 
 /// Spielkennung der laufenden GBA-ROM (z. B. „BZMP“)
@@ -273,7 +285,7 @@ impl Root {
                 pl.push(line(t("Aktuelle Herzen", "Current hearts"), s2));
             }
             v.push(section(t("Spieler", "Player"), pl).into_any_element());
-            let inv = vec![preset(self, 2, cx), preset(self, 3, cx), preset(self, 4, cx), preset(self, 5, cx), preset(self, 6, cx)];
+            let inv = vec![preset(self, 2, cx), preset(self, 3, cx), preset(self, 4, cx), preset(self, 5, cx), preset(self, 6, cx), preset(self, 8, cx)];
             let mut ib = vec![grid(2, inv, 12.0).into_any_element()];
             ib.push(
                 row()
@@ -290,6 +302,12 @@ impl Root {
                             g.run_once(MINISH_EU[7].2);
                         }
                         r.app.msg(tr(en, "Alle Schwerttechniken erhalten", "All sword techniques given"));
+                    }))
+                    .child(button("gba-give-maps", t("Alle Karten geben", "Give all maps"), has, cx, move |r| {
+                        if let Some(g) = r.app.gba.game.as_mut() {
+                            g.run_once(MINISH_EU[8].2);
+                        }
+                        r.app.msg(tr(en, "Weltkarte und alle Dungeon-Karten erhalten", "World map and all dungeon maps given"));
                     }))
                     .child(button("gba-give-20", t("20 Herzcontainer", "20 heart containers"), has, cx, move |r| {
                         if let Some(g) = r.app.gba.game.as_mut() {

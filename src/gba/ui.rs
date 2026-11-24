@@ -41,6 +41,25 @@ pub struct GbaView {
     y_empty: Option<gfx::TextureHandle>,
     /// dieselben Symbole als RGBA: das Y-Feld wird ins Spielbild gesetzt (gleiche Farben und HD-Filter wie B/A)
     icons_rgba: HashMap<u8, Vec<u8>>,
+    /// im Item-Menü aufgenommene Symbole (oben abgeschnitten, nur für die Menü-Anzeige)
+    icons_menu: HashMap<u8, Vec<u8>>,
+    /// reine Item-Grafiken ohne Tastenkreis für die Item-Leiste (wie im Inventar), beim Öffnen neu berechnet
+    icons_bare: HashMap<u8, gfx::TextureHandle>,
+    bare_dirty: bool,
+    /// Item-Grafiken aus dem Item-Menü (24×24, ohne Tastenkreis) – die schönste Quelle für die Item-Leiste
+    icons_inv: HashMap<u8, Vec<u8>>,
+    inv_tex: HashMap<u8, gfx::TextureHandle>,
+    inv_tex_hd: bool,
+    /// Kästchen der Item-Leiste als fertige Bilder (Kästchen + Item, durch den Bildfilter des Spiels): normal / gewählt
+    tile_tex: HashMap<(u8, bool), gfx::TextureHandle>,
+    tile_filter: Option<crate::filters::Filter>,
+    /// Lage der Inventar-Grafik im Ausschnitt des B-Felds (wie das Spiel Items auf B/A zeichnet)
+    item_off: Option<(isize, isize)>,
+    /// leerer B-Kreis, wie aufgenommen (vor dem Umwandeln in Y) – zum Herauslösen eines Items aus einer B-Aufnahme
+    ring_raw: Option<Vec<u8>>,
+    inv_grabbed: bool,
+    /// Spielbild, ab dem das Item-Menü fertig eingeblendet ist
+    inv_at: u64,
     pub bar_open: bool,
     bar_items: Vec<u8>,
     bar_sel: usize,
@@ -60,6 +79,16 @@ pub struct GbaView {
     pub play_frames: u64,
     pub deaths: u32,
     last_hp: u8,
+    /// Y-Taste im letzten Bild gedrückt (Item-Menü: Y legt das Item unter dem Cursor auf Y)
+    y_prev: bool,
+    /// nächster Versuch, ein Item-Symbol aufzunehmen (Spielbild-Zähler), nach einem Fehlschlag erst später
+    capture_at: u64,
+    /// Y-Item, das Link im laufenden Spielstand wirklich hat (0 = keins; ein Item aus einem anderen Spielstand zählt nicht)
+    y_shown: u8,
+    y_check_at: u64,
+    y_checked: u8,
+    /// B-Feld so, wie es vor dem Drücken von Y aussah (RGBA, Ausschnitt wie die Item-Symbole)
+    b_patch: Option<Vec<u8>>,
     /// Entwicklung: Slot-Test (PASTLINK_GBA_SLOTTEST)
     dev_tick: u32,
 }
@@ -87,6 +116,18 @@ impl Default for GbaView {
             icons: HashMap::new(),
             y_empty: None,
             icons_rgba: HashMap::new(),
+            icons_menu: HashMap::new(),
+            icons_bare: HashMap::new(),
+            bare_dirty: false,
+            icons_inv: HashMap::new(),
+            inv_tex: HashMap::new(),
+            inv_tex_hd: false,
+            tile_tex: HashMap::new(),
+            tile_filter: None,
+            item_off: None,
+            ring_raw: None,
+            inv_grabbed: false,
+            inv_at: u64::MAX,
             bar_open: false,
             bar_items: Vec::new(),
             bar_sel: 0,
@@ -102,6 +143,12 @@ impl Default for GbaView {
             play_frames: 0,
             deaths: 0,
             last_hp: 0,
+            y_prev: false,
+            capture_at: 0,
+            y_shown: 0,
+            y_check_at: 0,
+            y_checked: 0,
+            b_patch: None,
             dev_tick: 0,
         }
     }
@@ -183,6 +230,10 @@ impl App {
         self.gba.hist.clear();
         self.gba.icons.clear();
         self.gba.icons_rgba.clear();
+        self.gba.icons_menu.clear();
+        self.gba.icons_bare.clear();
+        self.gba.icons_inv.clear();
+        self.gba.inv_tex.clear();
         self.gba.y_empty = None;
         self.gba.bar_open = false;
         self.thumbs.clear();
@@ -198,6 +249,9 @@ impl App {
         self.auto_paused = self.s.auto_pause && !focused;
         let blocked = blocked || self.paused || self.auto_paused || self.gba.win_cheats || (self.s.pause_in_menus && self.popup_open());
         let speed = if turbo { self.s.turbo_speed as f64 } else if double { 2.0 * self.s.speed as f64 } else { self.s.speed as f64 };
+        // Entwicklung: Tastenfolge abspielen (PASTLINK_GBA_KEYS = „taste:bild,…“, Bilder ab Spielstart gezählt;
+        // s=Start, a=A, b=B, y=Y, u/d/l/r, D=Steuerkreuz ↓ am Controller …)
+        let pad = pad | self.gba_dev_keys();
         let (pad, blocked) = self.gba_item_bar(ctx, pad, blocked);
         // wie bei A Link to the Past: Anzeige „TURBO“ / „×2“ / „Zurückspulen“ solange gehalten
         self.turbo_on = turbo;
@@ -208,6 +262,42 @@ impl App {
         let save_sram = self.s.save_sram;
         let Some(g) = self.gba.game.as_mut() else { return };
         g.save_sav = save_sram;
+        // Item-Menü (Start): Y legt das Item unter dem Cursor auf Y – wie A und B im Spiel
+        let mut pad = pad;
+        let y_now = pad & 0x4000 != 0;
+        let y_edge = y_now && !self.gba.y_prev;
+        self.gba.y_prev = y_now;
+        // Y gedrückt: B-Feld vorher festhalten – solange das Y-Item kurz auf B liegt, zeigt B weiter sein Item
+        if y_now && g.y_active().is_none() && self.gba.y_shown != 0 && self.gba.hud {
+            self.gba.b_patch = g.b_box().and_then(|(bx, by)| {
+                let (w, h) = (g.w, g.h);
+                if bx < 0 || bx as usize + super::ICON_W > w || g.frame.len() < w * h * 4 {
+                    return None;
+                }
+                let mut out = vec![0u8; super::ICON_W * super::ICON_H * 4];
+                for y in 0..super::ICON_H {
+                    let fy = by + y as isize;
+                    if fy < 0 || fy as usize >= h {
+                        continue;
+                    }
+                    for x in 0..super::ICON_W {
+                        let i = (fy as usize * w + bx as usize + x) * 4;
+                        let o = (y * super::ICON_W + x) * 4;
+                        out[o..o + 4].copy_from_slice(&[g.frame[i], g.frame[i + 1], g.frame[i + 2], 255]);
+                    }
+                }
+                Some(out)
+            });
+        }
+        if let Some(mi) = g.menu_item() {
+            pad &= !0x4000;
+            let mi = if mi == 16 { 15 } else { mi };
+            if y_edge && super::minish::EQUIPPABLE.contains(&mi) {
+                g.cfg.y_item = mi;
+                g.save_cfg();
+                self.gba.dirty = true;
+            }
+        }
         if g.cfg_dirty {
             g.cfg_dirty = false;
             let key = gba_key(&g.path);
@@ -320,14 +410,20 @@ impl App {
         // Symbole aus dem Spiel aufnehmen (einmal je Item; Flaschen jedes Mal neu, ihr Inhalt wechselt)
         let mut new_icons: Vec<(u8, Vec<u8>)> = Vec::new();
         let hud = self.gba.hud;
-        if self.gba.y_empty.is_none() && hud {
-            if let Some(mut img) = g.capture_icon(0) {
-                letter_y(&mut img);
-                new_icons.push((0, img));
+        // Aufnahmen kosten zwei Spielbilder (vor und zurück): nach einem Fehlschlag erst nach einer Sekunde wieder
+        let can_capture = hud && self.gba.play_frames >= self.gba.capture_at;
+        if self.gba.y_empty.is_none() && can_capture && g.menu_item().is_none() {
+            match g.capture_icon(0) {
+                Some(mut img) => {
+                    self.gba.ring_raw = Some(img.clone());
+                    letter_y(&mut img);
+                    new_icons.push((0, img));
+                }
+                None => self.gba.capture_at = self.gba.play_frames + 60,
             }
         }
         let dev_bar = std::env::var("PASTLINK_OPEN").is_ok_and(|v| v == "gbabar");
-        if held && (!self.gba.bar_held_prev || dev_bar) && !self.gba.bar_open && hud {
+        if held && (!self.gba.bar_held_prev || dev_bar) && !self.gba.bar_open && hud && g.menu_item().is_none() {
             self.gba.bar_items = g.owned_items();
             for &i in &self.gba.bar_items {
                 if !self.gba.icons.contains_key(&i) || (28..=31).contains(&i) {
@@ -345,40 +441,51 @@ impl App {
             self.gba.bar_sel = self.gba.bar_items.iter().position(|&i| i == cur).unwrap_or(0);
             self.gba.bar_scroll = self.gba.bar_sel as f32;
             self.gba.bar_open = true;
+            self.gba.bare_dirty = true;
             self.gba.bar_prev = pad;
             self.gba.bar_sticky = false;
             self.gba.bar_moved = false;
             self.gba.bar_t0 = Instant::now();
             self.gba.bar_nav_dir = 0;
         }
-        let y = g.cfg.y_item;
-        if y != 0 && !self.gba.icons.contains_key(&y) && hud {
-            if let Some(img) = g.capture_icon(y) {
-                new_icons.push((y, img));
+        // Y nur mit einem Item, das Link in diesem Spielstand hat (zweimal pro Sekunde geprüft)
+        if self.gba.play_frames >= self.gba.y_check_at || self.gba.y_checked != g.cfg.y_item {
+            self.gba.y_check_at = self.gba.play_frames + 30;
+            let y = g.cfg.y_item;
+            let owned = y != 0 && g.owned_items().contains(&y);
+            // im Spiel (Anzeige sichtbar) und Item fehlt: Belegung stammt aus einem anderen Spielstand – löschen,
+            // damit sie nicht später (z. B. nach einem Cheat) plötzlich wieder auftaucht
+            if y != 0 && !owned && hud {
+                g.cfg.y_item = 0;
+                g.save_cfg();
+            }
+            self.gba.y_checked = g.cfg.y_item;
+            self.gba.y_shown = if owned { y } else { 0 };
+        }
+        let y = self.gba.y_shown;
+        let in_menu = g.menu_item().is_some();
+        if y != 0 && !self.gba.icons.contains_key(&y) && hud && self.gba.play_frames >= self.gba.capture_at {
+            if in_menu {
+                // im Item-Menü nicht aufnehmen: das Zurückspulen brächte die Menü-Eingabe durcheinander – das Symbol
+                // kommt, sobald das Menü zu ist
+            } else {
+                match g.capture_icon(y) {
+                    Some(img) => new_icons.push((y, img)),
+                    None => self.gba.capture_at = self.gba.play_frames + 60,
+                }
             }
         }
+
         let mut out = (pad, blocked);
         if self.gba.bar_open {
             let n = self.gba.bar_items.len().max(1);
-            let pressed = pad & !self.gba.bar_prev;
             self.gba.bar_prev = pad;
-            // Richtung: Stick, L/R, Steuerkreuz ←/→ (beim Halten nicht die Richtung, die die Leiste geöffnet hat)
-            let sticky = self.gba.bar_sticky;
-            let (left, right) = (d & (1 << 9) != 0, d & (1 << 8) != 0 || self.qm_pad);
-            let use_l = sticky || self.gba.bar_slot != 0;
-            let use_r = sticky || self.gba.bar_slot != 2;
-            let mut dx = 0i8;
-            if dir_x < -0.5 || pad & 0x0020 != 0 || (use_l && left) {
-                dx = -1;
-            }
-            if dir_x > 0.5 || pad & 0x0010 != 0 || (use_r && right) {
-                dx = 1;
-            }
+            // wählen nur mit dem Stick (rechter Stick, sonst linker); halten wiederholt
+            let dx: i8 = if dir_x < -0.5 { -1 } else if dir_x > 0.5 { 1 } else { 0 };
             let now = Instant::now();
             if dx != 0 && (dx != self.gba.bar_nav_dir || now >= self.gba.bar_nav_next) {
                 let first = dx != self.gba.bar_nav_dir;
                 self.gba.bar_sel = (self.gba.bar_sel as i32 + dx as i32).rem_euclid(n as i32) as usize;
-                self.gba.bar_moved = true;
                 self.gba.bar_nav_next = now + std::time::Duration::from_millis(if first { 300 } else { 110 });
             }
             self.gba.bar_nav_dir = dx;
@@ -387,21 +494,8 @@ impl App {
             if (self.gba.bar_scroll - self.gba.bar_sel as f32).abs() > n as f32 / 2.0 {
                 self.gba.bar_scroll = self.gba.bar_sel as f32;
             }
-            let (mut confirm, mut cancel) = (false, false);
-            if !sticky {
-                if !held && self.gba.bar_held_prev {
-                    if self.gba.bar_t0.elapsed().as_secs_f32() < 0.3 && !self.gba.bar_moved {
-                        self.gba.bar_sticky = true;
-                    } else {
-                        confirm = true;
-                    }
-                }
-            } else {
-                let own = self.gba.bar_slot == 1 && d & (1 << 10) != 0 && !self.gba.bar_held_prev;
-                confirm = pressed & (0x0080 | 0x1000) != 0 || own;
-                cancel = pressed & 0x8000 != 0;
-            }
-            if confirm {
+            // Pfeil losgelassen: Item ausrüsten, Leiste zu
+            if !held {
                 self.gba.bar_open = false;
                 if let Some(&i) = self.gba.bar_items.get(self.gba.bar_sel) {
                     match self.gba.bar_slot {
@@ -413,8 +507,6 @@ impl App {
                         }
                     }
                 }
-            } else if cancel {
-                self.gba.bar_open = false;
             }
             out = (0, true);
         }
@@ -428,54 +520,190 @@ impl App {
                 self.gba.icons.insert(i, t);
             }
         }
+        // Item-Menü offen: einmal je Öffnen alle Item-Grafiken aufnehmen (Figuren ohne Hintergrund, wie im Inventar)
+        let hd = self.s.filter.is_hd();
+        if let Some(g) = self.gba.game.as_mut() {
+            let menu = g.menu_item();
+            if menu.is_some() && self.gba.inv_at == u64::MAX {
+                self.gba.inv_at = self.gba.play_frames + 30;
+            }
+            match menu {
+                Some(cursor) if !self.gba.inv_grabbed && self.gba.play_frames >= self.gba.inv_at => {
+                    self.gba.inv_grabbed = true;
+                    let b_item = g.peek(super::minish::EQUIP_B, 1).map_or(0, |b| b[0]);
+                    if let Some((px, w, h)) = g.capture_sprites() {
+                        let dx = w.saturating_sub(super::W) / 2;
+                        let mut ids = g.owned_items();
+                        ids.extend([8u8, 16]);
+                        let _ = b_item;
+                        for item in ids {
+                            let Some((cx, cy)) = g.menu_pos(item) else { continue };
+                            let cx = cx + dx;
+                            // das Item (18×18), ohne Zahlen daneben und ohne Ecken des Menü-Cursors
+                            const S: usize = super::INV_ICON;
+                            let mut out = vec![0u8; S * S * 4];
+                            for y in 0..S {
+                                for x in 0..S {
+                                    let (fx, fy) = ((cx + x) as isize - 9, (cy + y) as isize - 16);
+                                    if fx < 0 || fy < 0 || fx as usize >= w || fy as usize >= h {
+                                        continue;
+                                    }
+                                    // Zahlen (Bomben, Pfeile) stehen unten rechts neben dem Item
+                                    if x >= S - 3 && y >= 11 {
+                                        continue;
+                                    }
+                                    let i = (fy as usize * w + fx as usize) * 4;
+                                    let p = &px[i..i + 4];
+                                    let magenta = p[0] >= 200 && p[1] <= 60 && p[2] >= 200;
+                                    // Ecken des Menü-Cursors (rot) – nur in den Ecken und nur beim Item unter dem Cursor
+                                    let corner = (x < 4 || x >= S - 4) && (y < 4 || y >= S - 4);
+                                    let red = cursor == item && corner && p[0] >= 200 && p[1] <= 60 && p[2] <= 60;
+                                    if !magenta && !red {
+                                        let o = (y * S + x) * 4;
+                                        out[o..o + 4].copy_from_slice(&[p[0], p[1], p[2], 255]);
+                                    }
+                                }
+                            }
+                            super::peel_highlight(&mut out, S);
+                            if out.chunks_exact(4).filter(|p| p[3] != 0).count() > 12 {
+                                let key = match item {
+                                    8 if !self.gba.icons_inv.contains_key(&7) => 7,
+                                    16 => 15,
+                                    i => i,
+                                };
+                                self.gba.icons_inv.insert(key, out.clone());
+                                self.gba.icons_inv.insert(item, out);
+                            }
+                        }
+                        self.gba.inv_tex.clear();
+                        if std::env::var_os("PASTLINK_ICON_LOG").is_some() {
+                            let mut keys: Vec<u8> = self.gba.icons_inv.keys().copied().collect();
+                            keys.sort();
+                            let mut px = Vec::new();
+                            for y in 0..super::INV_ICON {
+                                for k in &keys {
+                                    let im = &self.gba.icons_inv[k];
+                                    for x in 0..super::INV_ICON {
+                                        let o = (y * super::INV_ICON + x) * 4;
+                                        px.push(if im[o + 3] == 0 { Color32::from_rgb(255, 0, 255) } else { Color32::from_rgb(im[o], im[o + 1], im[o + 2]) });
+                                    }
+                                }
+                            }
+                            let raw: Vec<u8> = px.iter().flat_map(|c| [c.r(), c.g(), c.b()]).collect();
+                            let _ = std::fs::write("inv_icons.rgb", raw);
+                            eprintln!("Inventar-Grafiken: {keys:?}");
+                        }
+                    }
+                }
+                Some(_) => {}
+                None => {
+                    self.gba.inv_grabbed = false;
+                    self.gba.inv_at = u64::MAX;
+                }
+            }
+        }
+        // Kästchen der Item-Leiste: als Pixelbild wie im Item-Menü (graues Kästchen, gewählt hellblau mit weißer Fläche)
+        // mit dem Item darauf – dann durch denselben Bildfilter wie das Spielbild (HD weich, Original scharf)
+        let filter = self.s.filter;
+        if self.gba.tile_filter != Some(filter) || (self.gba.inv_tex.is_empty() && !self.gba.icons_inv.is_empty()) {
+            self.gba.tile_filter = Some(filter);
+            self.gba.tile_tex.clear();
+            self.gba.inv_tex.clear();
+            self.gba.inv_tex_hd = hd;
+            for (&i, img) in &self.gba.icons_inv {
+                for sel in [false, true] {
+                    let px = super::bar_tile(img, sel);
+                    let (mut tmp, mut out) = (Vec::new(), Vec::new());
+                    let size = crate::filters::apply(filter, &px, super::TILE_W, super::TILE_H, &mut tmp, &mut out);
+                    let t = ctx.load_texture(format!("gba-tile-{i}-{sel}"), gfx::ColorImage { size, pixels: out }, filter.texture_options());
+                    self.gba.tile_tex.insert((i, sel), t);
+                }
+                // Merker: Texturen für dieses Item gebaut
+                let t = ctx.load_texture(format!("gba-inv-{i}"), gfx::ColorImage { size: [1, 1], pixels: vec![Color32::TRANSPARENT] }, gfx::TextureOptions::NEAREST);
+                self.gba.inv_tex.insert(i, t);
+            }
+        }
+        // Lage der Items im B-Feld einmal bestimmen: eine echte B-Aufnahme mit der Inventar-Grafik vergleichen
+        if self.gba.item_off.is_none() {
+            let pair = self.gba.icons_inv.iter().find_map(|(i, inv)| self.gba.icons_rgba.get(i).filter(|_| *i != 0).map(|hud| (hud.clone(), inv.clone())));
+            if let Some((hud, inv)) = pair {
+                self.gba.item_off = super::find_item_offset(&hud, &inv);
+            }
+        }
+        // Item-Leiste: Grafiken ohne Tastenkreis (der Kreis ist in allen Aufnahmen gleich und wird herausgerechnet)
+        if self.gba.bare_dirty {
+            self.gba.bare_dirty = false;
+            let mut ids: Vec<u8> = self.gba.icons_rgba.keys().copied().filter(|&i| i != 0).collect();
+            ids.sort();
+            let imgs: Vec<Vec<u8>> = ids.iter().map(|i| self.gba.icons_rgba[i].clone()).collect();
+            if imgs.len() >= 3 {
+                for (i, img) in ids.iter().zip(super::strip_ring(&imgs)) {
+                    // Ersatz, solange das Item nicht aus dem Inventar aufgenommen ist: das Item (oben links im B-Feld)
+                    // auf 16×16 zuschneiden – ohne Zahlen und Kreisreste darunter
+                    if !self.gba.icons_inv.contains_key(i) {
+                        const S: usize = super::INV_ICON;
+                        let mut out = vec![0u8; S * S * 4];
+                        for y in 0..S.min(super::ICON_H) {
+                            for x in 0..S.min(super::ICON_W - 1) {
+                                let o = (y * super::ICON_W + x + 1) * 4;
+                                out[(y * S + x) * 4..(y * S + x) * 4 + 4].copy_from_slice(&img[o..o + 4]);
+                            }
+                        }
+                        self.gba.icons_inv.insert(*i, out);
+                        self.gba.inv_tex.clear();
+                    }
+                    let t = ctx.load_texture(format!("gba-bare-{i}"), gfx::ColorImage::from_rgba_unmultiplied([super::ICON_W, super::ICON_H], &img), gfx::TextureOptions::NEAREST);
+                    self.gba.icons_bare.insert(*i, t);
+                }
+            }
+        }
         out
     }
 
-    /// Item-Leiste zeichnen (The Minish Cap), im Stil der Item-Leiste von A Link to the Past: Band mit weißer und
-    /// grüner Doppellinie, Auswahl in der Mitte, goldene Pfeile, Tastenschild (Y/B/A), Name darunter.
-    /// Das Y-Feld selbst steht im Spielbild (siehe `gba_upload`).
-    fn gba_draw_y(&self, painter: &gfx::Painter, r: gfx::Rect, _gp: f32) {
+    /// Item-Leiste zeichnen (The Minish Cap), im Stil des Item-Menüs des Spiels: Steinleiste, graue Kästchen, die
+    /// Auswahl hellblau mit weißem Kreis und roten Cursor-Ecken, der Name in der schwarzen Textleiste. Gezeichnet in
+    /// Spielpixeln (`gp` = Bildschirmpunkte je Spielpixel), Item-Grafiken im HD-Modus weich, sonst scharf.
+    fn gba_draw_y(&self, painter: &gfx::Painter, r: gfx::Rect, gp: f32) {
         let Some(g) = &self.gba.game else { return };
         if !g.is_minish() || !self.gba.bar_open {
             return;
         }
         let en = self.s.ui_en;
+        let hd = self.gba.inv_tex_hd;
         let uv = gfx::Rect::from_min_max(gfx::pos2(0.0, 0.0), gfx::pos2(1.0, 1.0));
-        painter.rect_filled(r, 0.0, Color32::from_black_alpha(120));
+        // nur innerhalb des Spielbilds zeichnen (nicht über die Ränder daneben)
+        let painter = painter.with_clip_rect(r);
+        let painter = &painter;
+        let gp = gp.max(1.0);
+        // Spielpixel → Bildschirm (im SD-Modus auf ganze Bildschirmpixel)
+        let snap = |v: f32| if hd { v } else { v.round() };
+        let rnd = if hd { gp * 2.0 } else { 0.0 };
+        painter.rect_filled(r, 0.0, Color32::from_black_alpha(110));
         let items = &self.gba.bar_items;
         let n = items.len().max(1);
         let sel = self.gba.bar_sel.min(n - 1);
-        let tile = (r.height() * 0.13).clamp(56.0, 104.0);
-        let gap = tile * 0.22;
-        let step = tile + gap;
-        let cy = r.top() + r.height() * 0.40;
-        let band = gfx::Rect::from_min_max(gfx::pos2(r.left(), cy - tile * 0.95), gfx::pos2(r.right(), cy + tile * 1.15));
-        let green = Color32::from_rgb(56, 176, 72);
-        let gold = Color32::from_rgb(248, 208, 64);
-        painter.rect_filled(band, 0.0, Color32::from_rgba_unmultiplied(8, 10, 40, 225));
-        let lw = 2.0;
-        for (y, c) in [(band.top() + lw * 1.5, Color32::WHITE), (band.top() + lw * 4.0, green), (band.bottom() - lw * 1.5, Color32::WHITE), (band.bottom() - lw * 4.0, green)] {
-            painter.line_segment([gfx::pos2(band.left(), y), gfx::pos2(band.right(), y)], Stroke::new(lw, c));
-        }
-        // Tastenschild: für welche Taste gewählt wird
-        {
-            let (lbl, col) = match self.gba.bar_slot {
-                1 => ("B", Color32::from_rgb(190, 50, 40)),
-                2 => ("A", Color32::from_rgb(40, 90, 200)),
-                _ => ("Y", Color32::from_rgb(40, 150, 60)),
-            };
-            let bs = tile * 0.42;
-            let b = gfx::Rect::from_min_size(gfx::pos2(band.left() + bs * 0.5, band.top() + bs * 0.5), gfx::vec2(bs, bs));
-            painter.rect_filled(b, 5.0, col);
-            painter.rect_stroke(b, 5.0, Stroke::new(2.0_f32, Color32::WHITE));
-            crate::pixfont::text(painter, b.center(), gfx::Align2::CENTER_CENTER, lbl, (bs / 9.0).round().max(1.0), Color32::WHITE);
+        // Farben des Item-Menüs
+        let stone = Color32::from_rgb(203, 190, 190);
+        let stone_dark = Color32::from_rgb(142, 142, 142);
+        let tile_c = Color32::from_rgb(165, 165, 165);
+        let blue = Color32::from_rgb(120, 216, 243);
+        let white = Color32::from_rgb(243, 243, 243);
+        let red = Color32::from_rgb(243, 25, 0);
+        let black = Color32::from_rgb(8, 8, 8);
+        // Maße in Spielpixeln
+        let (tw, th, step) = (super::TILE_W as f32, super::TILE_H as f32, super::TILE_W as f32 + 5.0);
+        let cy = snap(r.top() + 62.0 * gp);
+        let band = gfx::Rect::from_min_max(gfx::pos2(r.left(), snap(cy - 18.0 * gp)), gfx::pos2(r.right(), snap(cy + 18.0 * gp)));
+        painter.rect_filled(band, 0.0, stone);
+        for (y, c) in [(band.top(), black), (band.top() + gp, stone_dark), (band.bottom() - 2.0 * gp, stone_dark), (band.bottom() - gp, black)] {
+            painter.rect_filled(gfx::Rect::from_min_size(gfx::pos2(band.left(), y), gfx::vec2(band.width(), gp)), 0.0, c);
         }
         if items.is_empty() {
-            crate::pixfont::text(painter, gfx::pos2(band.center().x, cy), gfx::Align2::CENTER_CENTER, if en { "NO ITEMS YET" } else { "NOCH KEINE ITEMS" }, (tile / 24.0).round().max(1.0), Color32::WHITE);
+            crate::pixfont::text(painter, gfx::pos2(band.center().x, cy), gfx::Align2::CENTER_CENTER, if en { "NO ITEMS YET" } else { "NOCH KEINE ITEMS" }, gp, black);
             return;
         }
-        // wenige Items: alle mittig; viele: Auswahl in der Mitte, Leiste läuft im Kreis
-        let fits = n as f32 * step < r.width() * 0.9;
+        // wenige Items: alle mittig; viele: Auswahl in der Mitte, die Leiste läuft im Kreis
+        let fits = n as f32 * step * gp < r.width() * 0.92;
         let center = if fits { (n as f32 - 1.0) / 2.0 } else { self.gba.bar_scroll };
         for (i, &it) in items.iter().enumerate() {
             let mut k = i as f32 - center;
@@ -483,32 +711,47 @@ impl App {
                 let nf = n as f32;
                 k = (k + nf / 2.0).rem_euclid(nf) - nf / 2.0;
             }
-            let x = r.center().x + k * step;
-            if x < r.left() - tile || x > r.right() + tile {
+            let x = r.center().x + k * step * gp;
+            if x < r.left() - step * gp || x > r.right() + step * gp {
                 continue;
             }
             let is_sel = i == sel;
-            let size = if is_sel { tile * 1.18 } else { tile };
-            let c = gfx::Rect::from_center_size(gfx::pos2(x, cy), gfx::vec2(size, size));
-            painter.rect_filled(c, 4.0, Color32::from_rgb(0, 0, 8));
-            painter.rect_stroke(c, 4.0, Stroke::new(2.0_f32, Color32::WHITE));
-            painter.rect_stroke(c.shrink(4.0), 2.0, Stroke::new(if is_sel { 3.0_f32 } else { 2.0 }, if is_sel { gold } else { green }));
-            if let Some(t) = self.gba.icons.get(&it) {
-                let ih = size * 0.76;
-                let ic = gfx::Rect::from_center_size(c.center(), gfx::vec2(ih * super::ICON_W as f32 / super::ICON_H as f32, ih));
-                painter.image(t.id(), ic, uv, if is_sel { Color32::WHITE } else { Color32::from_gray(200) });
+            let c = gfx::Rect::from_center_size(gfx::pos2(snap(x), cy), gfx::vec2(tw * gp, th * gp));
+            match self.gba.tile_tex.get(&(it, is_sel)) {
+                Some(t) => painter.image(t.id(), c, uv, Color32::WHITE),
+                None => {
+                    painter.rect_filled(c.expand(gp), rnd, stone_dark);
+                    painter.rect_filled(c, rnd, if is_sel { blue } else { tile_c });
+                    let ic = c.center() - gfx::vec2(0.0, gp);
+                    if is_sel {
+                        painter.circle_filled(ic, 9.0 * gp, white);
+                    }
+                    if let Some(t) = self.gba.icons_bare.get(&it).or_else(|| self.gba.icons.get(&it)) {
+                        painter.image(t.id(), gfx::Rect::from_center_size(ic + gfx::vec2(0.0, 6.0 * gp), gfx::vec2(super::ICON_W as f32 * gp, super::ICON_H as f32 * gp)), uv, Color32::WHITE);
+                    }
+                }
+            }
+            if is_sel {
+                // rote Cursor-Ecken wie im Item-Menü
+                let o = c.expand(2.0 * gp);
+                let (l, t2) = (4.0 * gp, 2.0 * gp);
+                for (px_, py_, sx, sy) in [(o.left(), o.top(), 1.0, 1.0), (o.right(), o.top(), -1.0, 1.0), (o.left(), o.bottom(), 1.0, -1.0), (o.right(), o.bottom(), -1.0, -1.0)] {
+                    let hx = gfx::Rect::from_two_pos(gfx::pos2(px_, py_), gfx::pos2(px_ + sx * l, py_ + sy * t2));
+                    let vx = gfx::Rect::from_two_pos(gfx::pos2(px_, py_), gfx::pos2(px_ + sx * t2, py_ + sy * l));
+                    painter.rect_filled(hx, 0.0, red);
+                    painter.rect_filled(vx, 0.0, red);
+                }
             }
         }
-        // Auswahl-Pfeile wie im Spiel (wippen leicht)
-        let sr = gfx::Rect::from_center_size(gfx::pos2(r.center().x + (if fits { sel as f32 - center } else { 0.0 }) * step, cy), gfx::vec2(tile * 1.18, tile * 1.18));
-        let bob = (self.gba.bar_t0.elapsed().as_secs_f32() * 6.0).sin() * 3.0;
-        for (dir, xx) in [(-1.0f32, sr.left() - 12.0 + bob), (1.0, sr.right() + 12.0 - bob)] {
-            let tip = gfx::pos2(xx + dir * 8.0, cy);
-            painter.add(gfx::Shape::convex_polygon(vec![tip, gfx::pos2(xx, cy - 9.0), gfx::pos2(xx, cy + 9.0)], gold, Stroke::NONE));
-        }
+        // Name in der schwarzen Textleiste wie im Item-Menü
         if let Some(&it) = items.get(sel) {
-            let name = super::minish::name(it, en);
-            painter.text(gfx::pos2(r.center().x, band.bottom() + 18.0), gfx::Align2::CENTER_TOP, name, gfx::FontId::monospace((tile * 0.27).clamp(16.0, 26.0)), Color32::WHITE);
+            let name = super::minish::name(it, en).to_uppercase();
+            let name = name.as_str();
+            let tw_ = crate::pixfont::width(name, gp) + 16.0 * gp;
+            let tb = gfx::Rect::from_center_size(gfx::pos2(r.center().x, snap(band.bottom() + 12.0 * gp)), gfx::vec2(tw_, 14.0 * gp));
+            painter.rect_filled(tb.expand(gp), rnd, white);
+            painter.rect_filled(tb, rnd, black);
+            crate::pixfont::text(painter, tb.center(), gfx::Align2::CENTER_CENTER, name, gp, white);
         }
     }
 
@@ -531,15 +774,117 @@ impl App {
             self.gba.cur.extend(g.frame.chunks_exact(4).map(col));
             // Y-Feld links neben B ins Bild setzen (geht dann wie B/A durch Farbtabelle und HD-Filter)
             if self.gba.hud && g.is_minish() && self.gba.cur.len() == w * h {
-                let id = if g.cfg.y_item != 0 && self.gba.icons_rgba.contains_key(&g.cfg.y_item) { g.cfg.y_item } else { 0 };
-                if let Some(img) = self.gba.icons_rgba.get(&id) {
-                    let x0 = super::ICON_X + g.hud_dx() - 24;
+                // Y-Feld = leerer Y-Kreis + Item-Grafik aus dem Inventar (an der Stelle, wo das Spiel Items auf B/A
+                // zeichnet) – so trägt es nie den Buchstaben B und ist auch im Item-Menü sofort da
+                let y_item = self.gba.y_shown;
+                let composed = match (y_item, self.gba.icons_rgba.get(&0), self.gba.icons_inv.get(&y_item)) {
+                    (i, Some(base), Some(item)) if i != 0 => Some(super::compose_slot(base, item, self.gba.item_off.unwrap_or((3, 1)))),
+                    // ohne Inventar-Grafik: das Item aus der B-Aufnahme lösen (was sich vom leeren B-Kreis unterscheidet)
+                    (i, Some(base), None) if i != 0 => match (self.gba.icons_rgba.get(&i), self.gba.ring_raw.as_ref()) {
+                        (Some(hud), Some(ring)) => {
+                            let mut out = base.clone();
+                            for p in 0..super::ICON_W * super::ICON_H {
+                                let o = p * 4;
+                                if hud[o + 3] != 0 && hud[o..o + 4] != ring[o..o + 4] {
+                                    out[o..o + 4].copy_from_slice(&hud[o..o + 4]);
+                                }
+                            }
+                            Some(out)
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let img = if y_item != 0 { composed.as_ref().or_else(|| self.gba.icons_rgba.get(&y_item)) } else { None };
+                if let Some(img) = img.or_else(|| self.gba.icons_rgba.get(&0)) {
+                    // links neben dem B-Feld, wo Picori es gerade zeichnet (Spiel, Item-Menü, Breitbild)
+                    let (bx, y0) = g.b_box().unwrap_or(((super::ICON_X + g.hud_dx()) as isize, super::ICON_Y as isize));
+                    let x0 = (bx - 24).max(0) as usize;
                     for y in 0..super::ICON_H {
                         for x in 0..super::ICON_W {
                             let o = (y * super::ICON_W + x) * 4;
-                            let (fx, fy) = (x0 + x, super::ICON_Y + y);
+                            let (fx, fy) = (x0 + x, y0 + y as isize);
+                            if fy < 0 {
+                                continue;
+                            }
+                            let fy = fy as usize;
                             if img[o + 3] != 0 && fx < w && fy < h {
                                 self.gba.cur[fy * w + fx] = col(&img[o..o + 4]);
+                            }
+                        }
+                    }
+                }
+            }
+            // Y in Benutzung: B-Feld zeigt weiter sein eigenes Item (gespeicherte Grafik oder Ausschnitt von vorher)
+            if let (Some(orig), Some((bx, by))) = (g.y_active(), g.b_box()) {
+                // der Ausschnitt von vorher deckt das Y-Item ab – aber nur dort, wo B-Item oder Y-Item liegen, damit
+                // Beschriftungen daneben (z. B. „Rollen“ am R-Feld) unberührt bleiben
+                let img = self.gba.b_patch.as_ref().or(self.gba.icons_rgba.get(&orig).filter(|_| orig != 0));
+                let m_orig = self.gba.icons_rgba.get(&orig).filter(|_| orig != 0);
+                let m_y = self.gba.icons_rgba.get(&self.gba.y_shown);
+                let covered = |o: usize| match (m_orig, m_y) {
+                    (None, None) => true,
+                    (a, b) => a.is_some_and(|m| m[o + 3] != 0) || b.is_some_and(|m| m[o + 3] != 0),
+                };
+                if let (Some(img), true) = (img, self.gba.cur.len() == w * h) {
+                    for y in 0..super::ICON_H {
+                        for x in 0..super::ICON_W {
+                            let o = (y * super::ICON_W + x) * 4;
+                            let (fx, fy) = (bx + x as isize, by + y as isize);
+                            if img[o + 3] != 0 && covered(o) && fx >= 0 && fy >= 0 && (fx as usize) < w && (fy as usize) < h {
+                                self.gba.cur[fy as usize * w + fx as usize] = col(&img[o..o + 4]);
+                            }
+                        }
+                    }
+                }
+            }
+            // Item-Menü: die Items auf A, B und Y gleich markieren – wie das Spiel das B-Item zeigt (hellblaues Kästchen,
+            // weißer Kreis hinter dem Item). B zeichnet das Spiel selbst, A (nur hellblau) und Y ergänzt Zelda Core.
+            if self.gba.cur.len() == w * h && g.menu_item().is_some() {
+                let a_item = g.peek(super::minish::EQUIP_A, 1).map_or(0, |b| b[0]);
+                let blue = col(&[120, 216, 243, 255]);
+                let white = col(&[243, 243, 243, 255]);
+                let dx = w.saturating_sub(super::W) / 2;
+                for item in [a_item, self.gba.y_shown] {
+                    // Bomben/Fernzünder-Bomben und Laterne an/aus stehen im Menü auf demselben Platz
+                    let alt = match item {
+                        7 => 8,
+                        8 => 7,
+                        15 => 16,
+                        16 => 15,
+                        i => i,
+                    };
+                    let Some((cx, cy)) = (item != 0).then(|| g.menu_pos(item).or_else(|| g.menu_pos(alt))).flatten() else { continue };
+                    let (cx, cy) = (cx + dx, cy);
+                    for y in cy.saturating_sub(15)..(cy + 4).min(h) {
+                        for x in cx.saturating_sub(13)..(cx + 13).min(w) {
+                            let i = (y * w + x) * 4;
+                            let p = [g.frame[i], g.frame[i + 1], g.frame[i + 2]];
+                            // Kästchen-Hintergrund (grau oder schon hellblau) – das Item selbst bleibt unberührt
+                            if p == [165, 165, 165] || p == [142, 142, 142] || p == [120, 216, 243] {
+                                // weiße Fläche genau wie beim B-Item (je Zeile von–bis, relativ zum Kästchen)
+                                const MASK: [(isize, isize, isize); 17] = [
+                                    (-14, -4, 3),
+                                    (-13, -6, 5),
+                                    (-12, -7, 6),
+                                    (-11, -8, 7),
+                                    (-10, -8, 7),
+                                    (-9, -9, 8),
+                                    (-8, -9, 8),
+                                    (-7, -9, 8),
+                                    (-6, -9, 8),
+                                    (-5, -9, 8),
+                                    (-4, -9, 8),
+                                    (-3, -9, 8),
+                                    (-2, -8, 7),
+                                    (-1, -8, 7),
+                                    (0, -7, 6),
+                                    (1, -6, 5),
+                                    (2, -4, 3),
+                                ];
+                                let (dx, dy) = (x as isize - cx as isize, y as isize - cy as isize);
+                                let inside = MASK.iter().any(|&(my, a, b)| my == dy && dx >= a && dx <= b);
+                                self.gba.cur[y * w + x] = if inside { white } else { blue };
                             }
                         }
                     }
@@ -548,9 +893,28 @@ impl App {
             if self.gba.prev.len() != self.gba.cur.len() {
                 self.gba.prev.clone_from(&self.gba.cur);
             }
-            // Hintergrund für Breitbild: das rohe Bild, weich gezeichnet
-            if self.s.widescreen != 0 && !self.s.gba_stretch {
-                let img = gfx::ColorImage { size: [w, h], pixels: self.gba.cur.clone() };
+            // Hintergrund für Breitbild (Ränder neben 4:3-Räumen und Menüs): das Bild stark verkleinert, damit es
+            // gestreckt richtig weich wirkt
+            if self.s.widescreen != 0 && !self.s.gba_stretch && self.gba.cur.len() == w * h {
+                const K: usize = 8;
+                let (bw, bh) = ((w / K).max(1), (h / K).max(1));
+                let mut px = Vec::with_capacity(bw * bh);
+                for by in 0..bh {
+                    for bx in 0..bw {
+                        let (mut r, mut gg, mut b) = (0u32, 0u32, 0u32);
+                        for y in by * K..(by * K + K).min(h) {
+                            for x in bx * K..(bx * K + K).min(w) {
+                                let c = self.gba.cur[y * w + x];
+                                r += c.r() as u32;
+                                gg += c.g() as u32;
+                                b += c.b() as u32;
+                            }
+                        }
+                        let n = (K * K) as u32;
+                        px.push(Color32::from_rgb((r / n) as u8, (gg / n) as u8, (b / n) as u8));
+                    }
+                }
+                let img = gfx::ColorImage { size: [bw, bh], pixels: px };
                 match &mut self.gba.back {
                     Some(t) => t.set(img, gfx::TextureOptions::LINEAR),
                     None => self.gba.back = Some(ctx.load_texture("gba-back", img, gfx::TextureOptions::LINEAR)),
@@ -635,7 +999,7 @@ impl App {
         if let (Some(f), Some(b), false) = (frame, &self.gba.back, self.s.gba_stretch) {
             // Rand: Spielbild vergrößert, abgedunkelt
             let zoom = gfx::Rect::from_center_size(f.center(), gfx::vec2(f.width().max(f.height() * gw / gh), f.width().max(f.height() * gw / gh) * gh / gw));
-            painter.with_clip_rect(f).image(b.id(), zoom, uv, Color32::from_gray(70));
+            painter.with_clip_rect(f).image(b.id(), zoom, uv, Color32::from_gray(140));
         }
         if let Some(m) = self.gpu_mode() {
             // HD-Filter auf der Grafikkarte: genau in Bildschirmpixeln berechnen und 1:1 zeigen
@@ -748,6 +1112,44 @@ impl App {
             format!("{} {slot} {}", self.t("Spielstand", "Save state"), self.t("ist leer", "is empty"))
         };
         self.msg(m);
+    }
+
+    fn gba_dev_keys(&mut self) -> u16 {
+        let Ok(spec) = std::env::var("PASTLINK_GBA_KEYS") else { return 0 };
+        let Some(g) = &self.gba.game else { return 0 };
+        if g.loading() {
+            return 0;
+        }
+        // gezählt in Spielbildern (die Anzeige kann viel schneller laufen)
+        let t = self.gba.play_frames as u32;
+        let mut pad = 0u16;
+        let mut dpad = 0u16;
+        for e in spec.split(',') {
+            let Some((k, at)) = e.split_once(':') else { continue };
+            let Ok(at) = at.parse::<u32>() else { continue };
+            if t < at || t >= at + 4 {
+                continue;
+            }
+            match k {
+                "s" => pad |= 0x1000,
+                "a" => pad |= 0x0080,
+                "b" => pad |= 0x8000,
+                "y" => pad |= 0x4000,
+                "u" => pad |= 0x0800,
+                "d" => pad |= 0x0400,
+                "l" => pad |= 0x0200,
+                "r" => pad |= 0x0100,
+                "D" => dpad |= 1 << 10,
+                "L" => dpad |= 1 << 9,
+                "R" => dpad |= 1 << 8,
+                _ => {}
+            }
+        }
+        self.ctl_dpad |= dpad;
+        if pad != 0 && std::env::var_os("PASTLINK_ICON_LOG").is_some() {
+            eprintln!("Taste {pad:04x} bei Bild {t}, Menü {:?}", self.gba.game.as_ref().and_then(|g| g.menu_item()));
+        }
+        pad
     }
 
     /// Entwicklung: Slot 3 speichern, weiterspielen, laden; Ergebnis in `slottest.txt` neben der .exe, danach das
@@ -877,7 +1279,8 @@ fn utc_offset_secs() -> i64 {
     0
 }
 
-/// Leeres B-Feld in ein Y-Feld verwandeln: den Buchstaben im Kreis durch ein „Y“ ersetzen (gleiche Farben)
+/// Leeres B-Feld in ein Y-Feld verwandeln: Buchstabe „B“ (1 Pixel dünn, dunkelblau auf graublau) durch ein „Y“ in
+/// derselben Schrift ersetzen
 pub(crate) fn letter_y(img: &mut [u8]) {
     let (w, h) = (super::ICON_W, super::ICON_H);
     let px = |img: &[u8], x: usize, y: usize| -> [u8; 4] { let i = (y * w + x) * 4; [img[i], img[i + 1], img[i + 2], img[i + 3]] };
@@ -899,32 +1302,45 @@ pub(crate) fn letter_y(img: &mut [u8]) {
     }
     let (cx, cy) = ((x0 + x1) as f32 / 2.0, (y0 + y1) as f32 / 2.0);
     let rad = ((x1 - x0) as f32 / 2.0).min((y1 - y0) as f32 / 2.0) - 2.0;
-    // Füllfarbe = hellste häufige Farbe innen, Buchstabe = dunkle Pixel innen
     let inner: Vec<(usize, usize)> = (y0..=y1).flat_map(|y| (x0..=x1).map(move |x| (x, y))).filter(|&(x, y)| ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt() < rad).collect();
-    let fill = inner.iter().map(|&(x, y)| px(img, x, y)).filter(|p| p[3] != 0).max_by_key(|&p| lum(p));
-    let Some(fill) = fill else { return };
-    let letter: Vec<(usize, usize)> = inner.iter().copied().filter(|&(x, y)| { let p = px(img, x, y); p[3] != 0 && lum(p) + 200 < lum(fill) }).collect();
-    let Some(lcol) = letter.iter().map(|&(x, y)| px(img, x, y)).min_by_key(|&p| lum(p)) else { return };
+    // Buchstabe = dunkelste Farbe innen; Füllung = häufigste übrige Farbe innen (graublau)
+    let Some(lcol) = inner.iter().map(|&(x, y)| px(img, x, y)).filter(|p| p[3] != 0).min_by_key(|&p| lum(p)) else { return };
+    let mut counts: Vec<([u8; 4], usize)> = Vec::new();
+    for &(x, y) in &inner {
+        let p = px(img, x, y);
+        if p[3] == 0 || p == lcol {
+            continue;
+        }
+        match counts.iter_mut().find(|c| c.0 == p) {
+            Some(c) => c.1 += 1,
+            None => counts.push((p, 1)),
+        }
+    }
+    let Some(&(fill, _)) = counts.iter().max_by_key(|c| c.1) else { return };
+    let letter: Vec<(usize, usize)> = inner.iter().copied().filter(|&(x, y)| px(img, x, y) == lcol).collect();
+    if letter.is_empty() {
+        return;
+    }
     let (lx0, ly0) = (letter.iter().map(|p| p.0).min().unwrap(), letter.iter().map(|p| p.1).min().unwrap());
-    let (lx1, ly1) = (letter.iter().map(|p| p.0).max().unwrap(), letter.iter().map(|p| p.1).max().unwrap());
+    let ly1 = letter.iter().map(|p| p.1).max().unwrap();
     for &(x, y) in &letter {
         let i = (y * w + x) * 4;
         img[i..i + 4].copy_from_slice(&fill);
     }
-    // „Y“ in der Größe des alten Buchstabens
-    let (lw, lh) = (lx1 - lx0 + 1, ly1 - ly0 + 1);
-    let mid = lx0 + lw / 2;
-    let fork = (lh / 2).max(1);
+    // „Y“, 5 breit, so hoch wie das „B“: zwei Schrägen, dann der Stiel in der Mitte
+    let left = lx0.saturating_sub(1);
+    let lh = ly1 - ly0 + 1;
     for y in 0..lh {
-        let xs: Vec<usize> = if y < fork {
-            let off = ((fork - y) as f32 * (lw as f32 / 2.0) / fork as f32).round() as usize;
-            vec![mid.saturating_sub(off), (mid + off).min(lx1)]
-        } else {
-            vec![mid]
+        let xs: Vec<usize> = match y {
+            0 => vec![left, left + 4],
+            1 => vec![left + 1, left + 3],
+            _ => vec![left + 2],
         };
         for x in xs {
-            let i = ((ly0 + y) * w + x) * 4;
-            img[i..i + 4].copy_from_slice(&lcol);
+            if x < w {
+                let i = ((ly0 + y) * w + x) * 4;
+                img[i..i + 4].copy_from_slice(&lcol);
+            }
         }
     }
 }

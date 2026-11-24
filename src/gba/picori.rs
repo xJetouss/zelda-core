@@ -15,6 +15,8 @@ type FAudio = unsafe extern "C" fn(*mut i16, i32) -> i32;
 type FView = unsafe extern "C" fn(i32, i32, i32);
 type FSave = unsafe extern "C" fn(*const i8, i32);
 type FInt = unsafe extern "C" fn(i32);
+type FIntR = unsafe extern "C" fn(i32) -> i32;
+type FXY = unsafe extern "C" fn(*mut i32, *mut i32) -> i32;
 type FSize = unsafe extern "C" fn() -> usize;
 type FStSave = unsafe extern "C" fn(*mut u8, usize) -> i32;
 type FStLoad = unsafe extern "C" fn(*const u8, usize) -> i32;
@@ -38,6 +40,10 @@ struct Api {
     write: FWrite,
     task: FVoidI,
     hud: FVoidI,
+    menu_item: FVoidI,
+    menu_pos: FIntR,
+    button_b: FXY,
+    debug: FIntR,
 }
 
 /// geladene DLL, ROM des laufenden Picori, Anfangszustand
@@ -100,6 +106,10 @@ fn load_api() -> Result<&'static Api, String> {
             write: f!("tmc_write"),
             task: f!("tmc_task"),
             hud: f!("tmc_hud"),
+            menu_item: f!("tmc_menu_item"),
+            menu_pos: f!("tmc_menu_pos"),
+            button_b: f!("tmc_button_b"),
+            debug: f!("tmc_debug"),
         };
         Ok(Box::leak(Box::new(api)))
     }
@@ -284,6 +294,38 @@ impl Core {
     /// Spielanzeige mit B-Feld sichtbar (im Spiel, kein Menü, B-Feld nicht ausgeblendet)
     pub fn hud(&self) -> bool {
         self.ready && unsafe { (self.api.hud)() } != 0
+    }
+
+    /// Item-Menü offen: Item unter dem Cursor (0 = leerer Platz); None = Menü nicht offen
+    pub fn menu_item(&self) -> Option<u8> {
+        if !self.ready {
+            return None;
+        }
+        let v = unsafe { (self.api.menu_item)() };
+        (v >= 0).then_some(v as u8)
+    }
+
+    /// Item-Menü: Mitte des Kästchens mit diesem Item (Bildpunkte im 240×160-Menü)
+    pub fn menu_pos(&self, item: u8) -> Option<(usize, usize)> {
+        if !self.ready {
+            return None;
+        }
+        let v = unsafe { (self.api.menu_pos)(item as i32) };
+        (v >= 0).then_some(((v & 0xFF) as usize, ((v >> 8) & 0xFF) as usize))
+    }
+
+    /// B-Tastenfeld ganz zu sehen: Mitte der Figur (Bildpunkte); None = gerade nicht (Zwischensequenz, Text …)
+    pub fn button_b(&self) -> Option<(i32, i32)> {
+        if !self.ready {
+            return None;
+        }
+        let (mut x, mut y) = (0, 0);
+        (unsafe { (self.api.button_b)(&mut x, &mut y) } != 0).then_some((x, y))
+    }
+
+    /// Entwicklung: Werte aus dem Spiel (siehe tmc_debug)
+    pub fn debug(&self, what: i32) -> i32 {
+        unsafe { (self.api.debug)(what) }
     }
 
     /// Spielaufgabe (2 = im Spiel)

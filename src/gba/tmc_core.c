@@ -10,6 +10,12 @@
 #include "save.h"
 #include "port_gba_mem.h"
 #include "port_rom.h"
+#include "menu.h"
+#include "game.h"
+#include "structures.h"
+#include "ui.h"
+#include "message.h"
+#include "item_ids.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -297,4 +303,74 @@ EXPORT int tmc_task(void) {
 /* Spielanzeige mit B-Feld sichtbar? (im Spiel, kein Menü/Übergang, B-Feld nicht ausgeblendet) */
 EXPORT int tmc_hud(void) {
     return gMain.task == 2 && gMain.state == 2 && !(gHUD.hideFlags & 0x02);
+}
+
+/* Item-Menü (Start, Seite „Items“): Item unter dem Cursor (0 = leerer Platz), -1 = Menü nicht offen */
+typedef struct {
+    u8 up, down, left, right, type, unk0, x, y;
+} TmcItemMenuEntry;
+extern const TmcItemMenuEntry gItemMenuTable[];
+
+static int ItemMenuOpen(void) {
+    return gMain.substate == GAMEMAIN_SUBTASK && gUI.lastState == 1 /* SUBTASK_PAUSEMENU */ &&
+           gPauseMenuOptions.screen == 1 /* Items */ && gMenu.menuType == 1;
+}
+
+EXPORT int tmc_menu_item(void) {
+    if (!ItemMenuOpen())
+        return -1;
+    u8 s = gMenu.field_0x3;
+    return s < 17 ? gPauseMenu.items[s] : 0;
+}
+
+/* Position des Kästchens mit diesem Item im Item-Menü (x | y << 8, Mitte des Kästchens), -1 = nicht da */
+EXPORT int tmc_menu_pos(int item) {
+    if (!ItemMenuOpen() || item <= 0)
+        return -1;
+    for (int i = 0; i < 17; i++) {
+        if (gPauseMenu.items[i] == item)
+            return gItemMenuTable[i].x | (gItemMenuTable[i].y << 8);
+    }
+    return -1;
+}
+
+/* Lage des B-Tastenfelds (Mitte der Figur), nur wenn es ganz an seinem Platz steht: bei Zwischensequenzen und Texten
+ * fährt das Spiel die Felder nach oben aus dem Bild. 0 = nicht zu sehen. */
+EXPORT int tmc_button_b(int* x, int* y) {
+    if (gHUD.hideFlags & HUD_HIDE_2)
+        return 0;
+    if (gMessage.state & MESSAGE_ACTIVE)
+        return 0;
+    for (int i = 0; i < MAX_UI_ELEMENTS; i++) {
+        UIElement* e = &gHUD.elements[i];
+        if (e->used && e->type == UI_ELEMENT_BUTTON_B && e->type2 == 0) {
+            if ((s16)e->y != (s16)gHUD.buttonY[UI_ELEMENT_BUTTON_B])
+                return 0;
+            *x = (s16)e->x;
+            *y = (s16)e->y;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+
+/* Entwicklung: Werte aus dem Spiel zur Fehlersuche (0 = Weltkarte im Inventar, 1..4 = Seitenwahl des Menüs für
+ * Start/L/R/B, 5 = aktuelle Menüseite) */
+extern u32 GetInventoryValue(u32 item);
+EXPORT int tmc_debug(int what) {
+    switch (what) {
+        case 0:
+            return (int)GetInventoryValue(72);
+        case 1: case 2: case 3: case 4:
+            return gMenu.field_0xc ? gMenu.field_0xc[what - 1] : -1;
+        case 5:
+            return gPauseMenuOptions.screen;
+        case 6:
+            return (int)ITEM_MAP;
+        case 7:
+            return (int)GetInventoryValue(ITEM_MAP);
+        default:
+            return -2;
+    }
 }

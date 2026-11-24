@@ -19,6 +19,11 @@ pub const ICON_X: usize = 174;
 pub const ICON_Y: usize = 8;
 pub const ICON_W: usize = 24;
 pub const ICON_H: usize = 28;
+/// Item-Grafik aus dem Item-Menü (Seitenlänge in Pixeln)
+pub const INV_ICON: usize = 18;
+/// Kästchen der Item-Leiste (Pixel), wie die Kästchen im Item-Menü
+pub const TILE_W: usize = 26;
+pub const TILE_H: usize = 20;
 /// Picori: Hintergrundebenen beim Aufnehmen der Item-Symbole (0 = nur Figuren)
 pub const ICON_LAYERS: i32 = 0;
 
@@ -394,6 +399,8 @@ mod running {
         /// ein Bild mit diesen Tasten (SNES-Bitbelegung)
         pub fn run_frame(&mut self, pad: u16) {
             let pad = self.y_step(pad);
+            // X = Select (am Controller liegt Select/Minus bei Zelda Core auf „Karte“; der GBA hat kein X)
+            let pad = if pad & 0x0040 != 0 { pad | 0x2000 } else { pad };
             if self.rc.is_some() {
                 self.rc_frame(pad, None);
                 return;
@@ -564,7 +571,7 @@ mod running {
             let mut pad = pad & !Y;
             let item = self.cfg.y_item;
             match self.y_phase {
-                0 if y && item != 0 && self.is_minish() => {
+                0 if y && item != 0 && self.is_minish() && self.owned_items().contains(&item) => {
                     self.y_b_orig = self.peek(minish::EQUIP_B, 1).map_or(0, |b| b[0]);
                     self.temp_cheats = vec![format!("3{:07X} 00{item:02X}", minish::EQUIP_B)];
                     self.apply_cheats();
@@ -591,6 +598,11 @@ mod running {
             pad
         }
 
+        /// Y-Taste gerade in Benutzung (Y-Item liegt vorübergehend auf B); Item, das sonst auf B liegt
+        pub fn y_active(&self) -> Option<u8> {
+            (self.y_phase != 0).then_some(self.y_b_orig)
+        }
+
         /// vorhandene Items (The Minish Cap), die man auf eine Taste legen kann
         pub fn owned_items(&self) -> Vec<u8> {
             self.peek(minish::INVENTORY, 34).map(|inv| minish::owned(&inv)).unwrap_or_default()
@@ -600,6 +612,7 @@ mod running {
         /// Dazu wird das Item kurz auf B gelegt, mit ausgeblendeten Hintergründen gezeichnet und alles zurückgestellt –
         /// im Spiel sieht man davon nichts.
         pub fn capture_icon(&mut self, item: u8) -> Option<Vec<u8>> {
+            let bbox = if self.rc.is_some() { Some(self.b_box()?) } else { None };
             let st = self.save_state()?;
             let frame = self.frame.clone();
             let (nf, fr) = (self.new_frame, self.frames);
@@ -608,17 +621,26 @@ mod running {
             if self.rc.is_some() {
                 // Picori: Item auf B, zwei Bilder ohne Hintergründe, B-Feld ausschneiden
                 if self.poke(minish::EQUIP_B, &[item]) {
-                    self.rc_frame(0, Some(ICON_LAYERS));
-                    self.rc_frame(0, Some(ICON_LAYERS));
-                    let dx = self.hud_dx();
-                    if self.frame.len() >= self.w * self.h * 4 && self.h == H {
+                    // leeres Feld: Kreis und Buchstabe stehen dann auf der Anzeige-Ebene (BG0), nicht als Figur
+                    let layers = if item == 0 { 1 } else { ICON_LAYERS };
+                    for _ in 0..2 {
+                        self.rc_frame(0, Some(layers));
+                    }
+                    let (ox, oy) = bbox.unwrap_or((ICON_X as isize, ICON_Y as isize));
+                    if self.frame.len() >= self.w * self.h * 4 && self.h == H && ox >= 0 && ox as usize + ICON_W <= self.w {
                         let mut out = vec![0u8; ICON_W * ICON_H * 4];
                         for y in 0..ICON_H {
+                            let fy = oy + y as isize;
+                            if fy < 0 || fy as usize >= self.h {
+                                continue;
+                            }
                             for x in 0..ICON_W {
-                                let i = ((ICON_Y + y) * self.w + ICON_X + dx + x) * 4;
+                                let i = ((fy as usize) * self.w + ox as usize + x) * 4;
                                 let p = &self.frame[i..i + 4];
                                 let o = (y * ICON_W + x) * 4;
-                                if p[0] > 8 || p[1] > 8 || p[2] > 8 {
+                                // Hintergrund ist bei der Aufnahme Magenta (tmc_core.dll), Schwarz gehört zur Figur
+                                let backdrop = p[0] >= 200 && p[1] <= 60 && p[2] >= 200;
+                                if !backdrop {
                                     out[o..o + 4].copy_from_slice(&[p[0], p[1], p[2], 255]);
                                 }
                             }
@@ -672,10 +694,28 @@ mod running {
             self.frames = fr;
             // gültig nur mit durchsichtigen Ecken und nicht fast ganz deckend (sonst lief gerade kein Spiel, z. B.
             // weißer Logo-Bildschirm)
+            if img.is_none() && std::env::var_os("PASTLINK_ICON_LOG").is_some() {
+                eprintln!("Symbol {item}: keine Aufnahme (Bild {}x{})", self.w, self.h);
+            }
             img.filter(|im| {
                 let a = |x: usize, y: usize| im[(y * ICON_W + x) * 4 + 3];
                 let opaque = im.chunks_exact(4).filter(|p| p[3] != 0).count();
-                a(0, 0) == 0 && a(ICON_W - 1, 0) == 0 && a(0, ICON_H - 1) == 0 && a(ICON_W - 1, ICON_H - 1) == 0 && opaque < ICON_W * ICON_H * 6 / 10 && opaque > 20
+                // der Tastenkreis muss zu sehen sein (weiß mit dunklem Rand, untere Hälfte) – sonst war die Anzeige gerade
+                // nicht da (Zwischensequenz, Übergang) und es wurde etwas anderes aufgenommen
+                let (mut white, mut dark) = (0, 0);
+                for p in im[14 * ICON_W * 4..].chunks_exact(4).filter(|p| p[3] != 0) {
+                    if p[0].min(p[1]).min(p[2]) > 200 {
+                        white += 1;
+                    } else if p[0].max(p[1]).max(p[2]) < 50 {
+                        dark += 1;
+                    }
+                }
+                let ring = white >= 8 && dark >= 15;
+                let ok = a(0, 0) == 0 && a(ICON_W - 1, 0) == 0 && a(0, ICON_H - 1) == 0 && a(ICON_W - 1, ICON_H - 1) == 0 && opaque < ICON_W * ICON_H * 6 / 10 && opaque > 20 && ring;
+                if !ok && std::env::var_os("PASTLINK_ICON_LOG").is_some() {
+                    eprintln!("Symbol {item} verworfen: Ecken {} {} {} {}, deckend {opaque}, weiß {white}, dunkel {dark}", a(0, 0), a(ICON_W - 1, 0), a(0, ICON_H - 1), a(ICON_W - 1, ICON_H - 1));
+                }
+                ok
             })
         }
 
@@ -701,6 +741,50 @@ mod running {
 
         /// Bytes in den Arbeitsspeicher (EWRAM 0x02000000..0x0203FFFF) schreiben – über den Spielstand (enthält das
         /// RAM ab Versatz 0x21000), weil der Kern keinen direkten Speicherzugriff anbietet
+        /// Picori: linke obere Ecke des B-Feld-Ausschnitts (wie ICON_X/ICON_Y), nur wenn das B-Feld ganz zu sehen ist
+        pub fn b_box(&self) -> Option<(isize, isize)> {
+            self.rc.as_ref().and_then(|c| c.button_b()).map(|(x, y)| (x as isize - 10, y as isize - 20))
+        }
+
+        /// Entwicklung: Werte aus Picori zur Fehlersuche
+        pub fn rc_debug(&self, what: i32) -> i32 {
+            self.rc.as_ref().map_or(-9, |c| c.debug(what))
+        }
+
+        /// Item-Menü der PC-Fassung offen: Item unter dem Cursor (0 = leer); None = nicht offen oder mGBA
+        pub fn menu_item(&self) -> Option<u8> {
+            self.rc.as_ref().and_then(|c| c.menu_item())
+        }
+
+        /// Item-Menü: Mitte des Kästchens mit diesem Item
+        pub fn menu_pos(&self, item: u8) -> Option<(usize, usize)> {
+            self.rc.as_ref().and_then(|c| c.menu_pos(item))
+        }
+
+        /// Picori: das nächste Spielbild nur mit Figuren zeichnen (Hintergrund Magenta) – z. B. die Item-Grafiken des
+        /// Item-Menüs. Ohne Zurückspulen (das brächte die Menü-Eingabe durcheinander): das Spiel läuft ein Bild weiter,
+        /// angezeigt wird weiter das vorige. Liefert RGBA, Breite, Höhe.
+        pub fn capture_sprites(&mut self) -> Option<(Vec<u8>, usize, usize)> {
+            self.rc.as_ref()?;
+            let (frame, nf, fw, fh) = (self.frame.clone(), self.new_frame, self.w, self.h);
+            // das B-Item für dieses eine Bild herunternehmen: sonst zeichnet das Item-Menü sein hellblaues Kästchen als
+            // Figur mit; gleich danach wieder zurück
+            let b = self.peek(minish::EQUIP_B, 1).map_or(0, |b| b[0]);
+            if b != 0 {
+                self.poke(minish::EQUIP_B, &[0]);
+            }
+            self.rc_frame(0, Some(0));
+            if b != 0 {
+                self.poke(minish::EQUIP_B, &[b]);
+            }
+            let out = (self.frame.len() >= self.w * self.h * 4).then(|| (self.frame.clone(), self.w, self.h));
+            self.frame = frame;
+            self.new_frame = nf;
+            self.w = fw;
+            self.h = fh;
+            out
+        }
+
         /// Cheat-Zeilen einmal ausführen (Knöpfe im Cheat-Menü, z. B. „Alle Items geben“)
         pub fn run_once(&mut self, code: &str) {
             let lines: Vec<&str> = code.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
@@ -765,9 +849,9 @@ mod running {
             if !self.is_minish() || self.w < W || self.h != H || self.frame.len() < self.w * H * 4 {
                 return false;
             }
-            if let Some(c) = &self.rc {
-                // Picori: aus dem Spielzustand (die Anzeige am R-Knopf trägt dort oft Text, z. B. „Rollen“)
-                return c.hud();
+            if self.rc.is_some() {
+                // Picori: das B-Feld steht ganz an seinem Platz (nicht bei Zwischensequenzen, Texten, Übergängen)
+                return self.b_box().is_some();
             }
             let (dx, fw) = (self.hud_dx(), self.w);
             let at = |x: usize, y: usize| {
@@ -870,6 +954,176 @@ impl Gba {
     pub fn apply_cheats(&mut self) {}
     pub fn save_cfg(&mut self) {}
     pub fn flush_sram(&mut self) {}
+}
+
+/// Kästchen der Item-Leiste als Pixelbild: wie im Item-Menü (Rand, graue Fläche; gewählt hellblau mit derselben
+/// weißen Fläche wie beim ausgerüsteten B-Item), darauf die Item-Grafik
+pub fn bar_tile(item: &[u8], sel: bool) -> Vec<crate::gfx::Color32> {
+    use crate::gfx::Color32;
+    let (w, h) = (TILE_W, TILE_H);
+    let border = Color32::from_rgb(142, 142, 142);
+    let fill = if sel { Color32::from_rgb(120, 216, 243) } else { Color32::from_rgb(165, 165, 165) };
+    let white = Color32::from_rgb(243, 243, 243);
+    // Ankerpunkt wie im Item-Menü (cx, cy); weiße Fläche je Zeile von–bis
+    let (cx, cy) = (13isize, 16isize);
+    const MASK: [(isize, isize, isize); 17] = [
+        (-14, -4, 3),
+        (-13, -6, 5),
+        (-12, -7, 6),
+        (-11, -8, 7),
+        (-10, -8, 7),
+        (-9, -9, 8),
+        (-8, -9, 8),
+        (-7, -9, 8),
+        (-6, -9, 8),
+        (-5, -9, 8),
+        (-4, -9, 8),
+        (-3, -9, 8),
+        (-2, -8, 7),
+        (-1, -8, 7),
+        (0, -7, 6),
+        (1, -6, 5),
+        (2, -4, 3),
+    ];
+    let mut px = vec![fill; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            if x == 0 || y == 0 || x + 1 == w || y + 1 == h {
+                px[y * w + x] = border;
+            } else if sel {
+                let (dx, dy) = (x as isize - cx, y as isize - cy);
+                if MASK.iter().any(|&(my, a, b)| my == dy && dx >= a && dx <= b) {
+                    px[y * w + x] = white;
+                }
+            }
+        }
+    }
+    // Item (INV_ICON²): links oben bei (cx - 9, cy - 16), wie im Item-Menü ausgeschnitten
+    let (ox, oy) = (cx - 9, cy - 16);
+    for y in 0..INV_ICON {
+        for x in 0..INV_ICON {
+            let o = (y * INV_ICON + x) * 4;
+            let (tx, ty) = (ox + x as isize, oy + y as isize);
+            if item[o + 3] != 0 && tx >= 0 && ty >= 0 && (tx as usize) < w && (ty as usize) < h {
+                px[ty as usize * w + tx as usize] = Color32::from_rgb(item[o], item[o + 1], item[o + 2]);
+            }
+        }
+    }
+    px
+}
+
+/// Wo liegt die Inventar-Grafik (INV_ICON²) in einer Aufnahme des B-Felds (ICON_W×ICON_H)? Größte Übereinstimmung.
+pub fn find_item_offset(hud: &[u8], inv: &[u8]) -> Option<(isize, isize)> {
+    let mut best = (0usize, (0isize, 0isize));
+    for oy in -6..10isize {
+        for ox in -6..10isize {
+            let mut n = 0;
+            for y in 0..INV_ICON {
+                for x in 0..INV_ICON {
+                    let o = (y * INV_ICON + x) * 4;
+                    if inv[o + 3] == 0 {
+                        continue;
+                    }
+                    let (hx, hy) = (ox + x as isize, oy + y as isize);
+                    if hx < 0 || hy < 0 || hx as usize >= ICON_W || hy as usize >= ICON_H {
+                        continue;
+                    }
+                    let h = (hy as usize * ICON_W + hx as usize) * 4;
+                    if hud[h + 3] != 0 && hud[h..h + 3] == inv[o..o + 3] {
+                        n += 1;
+                    }
+                }
+            }
+            if n > best.0 {
+                best = (n, (ox, oy));
+            }
+        }
+    }
+    (best.0 >= 20).then_some(best.1)
+}
+
+/// Tastenfeld zusammensetzen: Kreis (mit Buchstabe) und darauf die Item-Grafik an `off`
+pub fn compose_slot(base: &[u8], item: &[u8], off: (isize, isize)) -> Vec<u8> {
+    let mut out = base.to_vec();
+    for y in 0..INV_ICON {
+        for x in 0..INV_ICON {
+            let o = (y * INV_ICON + x) * 4;
+            let (tx, ty) = (off.0 + x as isize, off.1 + y as isize);
+            if item[o + 3] != 0 && tx >= 0 && ty >= 0 && (tx as usize) < ICON_W && (ty as usize) < ICON_H {
+                let t = (ty as usize * ICON_W + tx as usize) * 4;
+                out[t..t + 4].copy_from_slice(&item[o..o + 4]);
+            }
+        }
+    }
+    out
+}
+
+/// Markierung des ausgerüsteten Items im Item-Menü entfernen (hellblaues Kästchen, weißer Kreis): von außen her alle
+/// hellblauen und weißen Pixel durchsichtig machen, die an Durchsichtiges grenzen. Das Item selbst hat einen dunklen
+/// Umriss und bleibt stehen.
+pub fn peel_highlight(img: &mut [u8], s: usize) {
+    let is = |img: &[u8], i: usize, c: [u8; 3]| img[i * 4 + 3] != 0 && img[i * 4..i * 4 + 3] == c;
+    loop {
+        let mut changed = false;
+        for y in 0..s {
+            for x in 0..s {
+                let i = y * s + x;
+                if !(is(img, i, [120, 216, 243]) || is(img, i, [243, 243, 243])) {
+                    continue;
+                }
+                let edge = x == 0 || y == 0 || x + 1 == s || y + 1 == s;
+                let open = edge
+                    || [(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)]
+                        .iter()
+                        .any(|&(nx, ny)| img[(ny * s + nx) * 4 + 3] == 0);
+                if open {
+                    img[i * 4 + 3] = 0;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
+/// Reine Item-Grafiken (wie im Inventar) aus Aufnahmen des B-Felds: der Tastenkreis ist in allen Aufnahmen gleich –
+/// Pixel, die in der Mehrheit der Aufnahmen übereinstimmen, gehören zum Kreis und werden durchsichtig. Bei weniger als
+/// drei Aufnahmen bleiben sie unverändert.
+pub fn strip_ring(icons: &[Vec<u8>]) -> Vec<Vec<u8>> {
+    if icons.len() < 3 {
+        return icons.to_vec();
+    }
+    let n = ICON_W * ICON_H;
+    let mut ring: Vec<Option<[u8; 4]>> = vec![None; n];
+    for (i, r) in ring.iter_mut().enumerate() {
+        let mut counts: Vec<([u8; 4], usize)> = Vec::new();
+        for im in icons {
+            let p = [im[i * 4], im[i * 4 + 1], im[i * 4 + 2], im[i * 4 + 3]];
+            match counts.iter_mut().find(|c| c.0 == p) {
+                Some(c) => c.1 += 1,
+                None => counts.push((p, 1)),
+            }
+        }
+        if let Some(best) = counts.iter().max_by_key(|c| c.1) {
+            if best.0[3] != 0 && best.1 * 2 > icons.len() {
+                *r = Some(best.0);
+            }
+        }
+    }
+    icons
+        .iter()
+        .map(|im| {
+            let mut out = im.clone();
+            for i in 0..n {
+                if ring[i].is_some_and(|p| p[..] == im[i * 4..i * 4 + 4]) {
+                    out[i * 4 + 3] = 0;
+                }
+            }
+            out
+        })
+        .collect()
 }
 
 #[cfg(all(test, pastlink_gba))]
@@ -1146,6 +1400,9 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
         let (Ok(p), Ok(st)) = (std::env::var("PASTLINK_GBA_ROM"), std::env::var("GBA_RC_STATE")) else { return };
         let out = std::env::var("PASTLINK_OUT").unwrap_or_else(|_| ".".into());
         let mut g = Gba::load_with(Path::new(&p), true, false).unwrap();
+        if std::env::var_os("GBA_WIDE").is_some() {
+            g.set_view(16, 9, true);
+        }
         let t0 = std::time::Instant::now();
         while g.loading() {
             g.run_frame(0);
@@ -1182,6 +1439,7 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
             for _ in 0..400 {
                 g.run_frame(0);
             }
+            if std::env::var_os("GBA_NOITEMS").is_none() {
             g.run_once("22002B32 5554
 22002B34 5555
 22002B36 5554
@@ -1191,6 +1449,7 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
             println!("Items: {own:?}");
             g.equip(false, own[own.len() / 2]);
             g.equip(true, own[1]);
+            }
             for _ in 0..30 {
                 g.run_frame(0);
             }
@@ -1228,10 +1487,45 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
             }
         }
         crate::devtest::bmp(&format!("{out}/rc_icons.bmp"), ICON_W * icons.len().max(1), ICON_H, &px);
+        let bare = strip_ring(&icons[1..]);
+        let mut px = Vec::new();
+        for y in 0..ICON_H {
+            for img in &bare {
+                for x in 0..ICON_W {
+                    let o = (y * ICON_W + x) * 4;
+                    px.push(if img[o + 3] == 0 { crate::gfx::Color32::from_rgb(255, 0, 255) } else { crate::gfx::Color32::from_rgb(img[o], img[o + 1], img[o + 2]) });
+                }
+            }
+        }
+        if !bare.is_empty() {
+            crate::devtest::bmp(&format!("{out}/rc_items.bmp"), ICON_W * bare.len(), ICON_H, &px);
+        }
         for m in [0, 1, 2, 4, 8] {
             g.rc_frame(0, Some(m));
             g.rc_frame(0, Some(m));
             dump(&g, &format!("rc_layer{m}"));
+            g.load_state(&st2);
+        }
+        // Karten-Cheat, dann Item-Menü (Start) und mit R/L zur Karte blättern (GBA_MAPTEST)
+        if std::env::var_os("GBA_MAPTEST").is_some() {
+            g.run_once("22002B42 4000");
+            println!("Karte im Inventar: {:?}", g.peek(minish::INVENTORY + 18, 1));
+            for f in 0..400 {
+                let k = match f {
+                    0..=2 => 0x1000,
+                    120..=122 => 0x0020,
+                    260..=262 => 0x0010,
+                    _ => 0,
+                };
+                g.run_frame(k);
+                if (118..135).contains(&f) {
+                    println!("  f{f} Seite {} Tabelle {:?} ITEM_MAP {} Wert {}", g.rc_debug(5), (1..5).map(|i| g.rc_debug(i)).collect::<Vec<_>>(), g.rc_debug(6), g.rc_debug(7));
+                }
+                if f == 119 || f == 250 || f == 399 {
+                    dump(&g, &format!("rc_page{f}"));
+                    println!("Bild {f}: Karte {:?} Spiel-Karte {} Seiten {:?} Seite {}", g.peek(minish::INVENTORY + 18, 1), g.rc_debug(0), (1..5).map(|i| g.rc_debug(i)).collect::<Vec<_>>(), g.rc_debug(5));
+                }
+            }
             g.load_state(&st2);
         }
         // Item-Menü (Start)
@@ -1239,7 +1533,14 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
             g.run_frame(if f < 3 { 0x1000 } else { 0 });
         }
         dump(&g, "rc_menu");
-        println!("Menü: hud {}", g.hud_visible());
+        if let Some((px, w, h)) = g.capture_sprites() {
+            let c: Vec<crate::gfx::Color32> = px.chunks_exact(4).map(|c| crate::gfx::Color32::from_rgb(c[0], c[1], c[2])).collect();
+            crate::devtest::bmp(&format!("{out}/rc_menu_spr.bmp"), w, h, &c);
+        }
+        println!("Menü: hud {} Cursor {:?}", g.hud_visible(), g.menu_item());
+        for &i in &g.owned_items() {
+            println!("  Item {i}: {:?}", g.menu_pos(i));
+        }
         g.load_state(&st2);
         // Spielstand speichern/laden: gleicher Stand, gleiche Bilder
         g.run_frame(0);

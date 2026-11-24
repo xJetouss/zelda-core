@@ -318,3 +318,22 @@ patch('port/port_save.c', [
 #endif
     return !sEepromWriteBlocked && !sEepromDirty;'''),
 ])
+
+# Aufnahme der Item-Symbole: Hintergrundfarbe Magenta statt Schwarz, damit die schwarzen Umrisse der Figuren erhalten
+# bleiben (Zelda Core erkennt den Hintergrund an der Farbe)
+patch('port/port_ppu.cpp', [
+    ('''        gIoMem[0x01] = (uint8_t)(coreDispHi & ~(~gTmcCoreLayers & 0x0F));
+#endif
+
+    dispcnt''', '''        gIoMem[0x01] = (uint8_t)(coreDispHi & ~(~gTmcCoreLayers & 0x0F));
+    const uint16_t coreBackdrop = gBgPltt[0];
+    if (gTmcCoreHosted && gTmcCoreLayers != 0x0F)
+        gBgPltt[0] = 0x7C1F;
+#endif
+
+    dispcnt'''),
+    ('''        gIoMem[0x01] = coreDispHi;
+        TmcCore_Present''', '''        gIoMem[0x01] = coreDispHi;
+        gBgPltt[0] = coreBackdrop;
+        TmcCore_Present'''),
+])
