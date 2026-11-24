@@ -1047,7 +1047,7 @@ impl Root {
             (t("Grafik", "Video"), true),
             ("Audio", true),
             (t("Steuerung", "Controls"), true),
-            (t("Spiel", "Game"), has && !gba),
+            (t("Spiel", "Game"), has || gba),
             ("Cheats", has || gba),
             ("Mods", !gba),
         ];

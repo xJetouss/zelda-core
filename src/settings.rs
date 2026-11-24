@@ -94,6 +94,12 @@ pub struct Settings {
     pub last_gba: String,
     /// The Minish Cap mit Picori (PC-Fassung, echtes Breitbild) statt mGBA, wenn tmc_core.dll da ist
     pub gba_rc: bool,
+    /// The Minish Cap: zusätzliche Y-Taste (Item auf Y)
+    pub gba_y: bool,
+    /// The Minish Cap: Item-Leiste über das Steuerkreuz (↓ = B, → = A, ← = Y)
+    pub gba_bar: bool,
+    /// The Minish Cap: Weltkarte von Anfang an (Kartenseite im Item-Menü mit L)
+    pub gba_map: bool,
     /// GBA: Cheats und Y-Item je Spiel (Schlüssel: Dateiname der ROM ohne Endung)
     pub gba_games: std::collections::HashMap<String, crate::gba::GameCfg>,
     /// Recompiled-Modus: übersetzter ROM-Code statt CPU-Emulation (Spielstände bleiben austauschbar)
@@ -205,6 +211,9 @@ impl Default for Settings {
             gba_stretch: false,
             last_gba: String::new(),
             gba_rc: true,
+            gba_y: true,
+            gba_bar: true,
+            gba_map: true,
             gba_games: std::collections::HashMap::new(),
             echo: true,
             voice_mute: 0,

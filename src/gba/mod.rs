@@ -82,6 +82,10 @@ pub mod minish {
     /// ausgerüstete Items: A, B
     pub const EQUIP_A: u32 = 0x0200_2AF4;
     pub const EQUIP_B: u32 = 0x0200_2AF5;
+    /// Weltkarte (Item 71 = Bits 6/7 von Inventar-Byte 17) als CodeBreaker-ODER-Zeile
+    pub const MAP_LINE: &str = "22002B42 4000";
+    /// Items mit Anzahl neben der Grafik (Bomben, Fernzünder-Bomben, Bogen)
+    pub const COUNTED: &[u8] = &[7, 8, 9, 10];
     /// Inventar: je Item 2 Bit (Wert != 0 = vorhanden)
     pub const INVENTORY: u32 = 0x0200_2B32;
     /// Items, die man auf A/B legen kann (Nummern wie im Spiel); bei Schwert/Bumerang/Schild zählt die beste Stufe
@@ -255,6 +259,8 @@ mod running {
         rc: Option<super::picori::Core>,
         /// Schreiberlaubnis, die Picori zuletzt bekam
         rc_write: bool,
+        /// The Minish Cap: Weltkarte von Anfang an (Einstellung „Spiel“)
+        pub force_map: bool,
     }
 
     impl Gba {
@@ -294,6 +300,7 @@ mod running {
                         y_b_orig: 0,
                         rc: Some(core),
                         rc_write: write_sav,
+                        force_map: false,
                     });
                 }
             }
@@ -344,6 +351,7 @@ mod running {
                 y_b_orig: 0,
                 rc: None,
                 rc_write: false,
+                force_map: false,
             };
             // Spielstand des Spiels (Batterie-Speicher)
             if let Ok(b) = std::fs::read(path.with_extension("sav")) {
@@ -463,6 +471,9 @@ mod running {
         /// alle eingeschalteten Cheat-Zeilen (vorübergehende der Y-Taste zuerst)
         fn cheat_lines(&self) -> Vec<String> {
             let mut v: Vec<String> = self.temp_cheats.clone();
+            if self.force_map && self.is_minish() {
+                v.push(minish::MAP_LINE.to_string());
+            }
             for c in self.cfg.cheats.iter().filter(|c| c.on) {
                 v.extend(c.code.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()));
             }
@@ -725,6 +736,11 @@ mod running {
                 return;
             }
             unsafe { core::retro_cheat_reset() };
+            if self.force_map && self.is_minish() {
+                if let Ok(cs) = std::ffi::CString::new(minish::MAP_LINE) {
+                    unsafe { core::retro_cheat_set(999, true, cs.as_ptr()) };
+                }
+            }
             for (i, code) in self.temp_cheats.iter().enumerate() {
                 if let Ok(cs) = std::ffi::CString::new(code.as_str()) {
                     unsafe { core::retro_cheat_set(1000 + i as u32, true, cs.as_ptr()) };
@@ -1042,6 +1058,67 @@ pub fn find_item_offset(hud: &[u8], inv: &[u8]) -> Option<(isize, isize)> {
     (best.0 >= 20).then_some(best.1)
 }
 
+/// Y-Feld genau wie das B-Feld: alles, was sich in der B-Aufnahme des Items (`hud`) vom leeren B-Kreis (`ring`)
+/// unterscheidet, auf den Y-Kreis (`base`) setzen – Item, Anzahl, Schatten wie im Spiel
+pub fn slot_from_b(base: &[u8], hud: &[u8], ring: &[u8]) -> Vec<u8> {
+    let mut out = base.to_vec();
+    for p in 0..ICON_W * ICON_H {
+        let o = p * 4;
+        if hud[o + 3] != 0 && hud[o..o + 4] != ring[o..o + 4] {
+            out[o..o + 4].copy_from_slice(&hud[o..o + 4]);
+        }
+    }
+    out
+}
+
+/// Item-Grafik (INV_ICON²) aus der B-Aufnahme lösen: was sich vom leeren B-Kreis unterscheidet, im Bereich, in dem
+/// das Spiel Items auf B zeichnet (`off`, wie `find_item_offset`)
+pub fn item_from_b(hud: &[u8], ring: &[u8], off: (isize, isize)) -> Vec<u8> {
+    let mut out = vec![0u8; INV_ICON * INV_ICON * 4];
+    for y in 0..INV_ICON {
+        for x in 0..INV_ICON {
+            let (hx, hy) = (off.0 + x as isize, off.1 + y as isize);
+            if hx < 0 || hy < 0 || hx as usize >= ICON_W || hy as usize >= ICON_H {
+                continue;
+            }
+            // Anzahl (Bomben, Pfeile) unten rechts gehört nicht zur Grafik
+            if x >= INV_ICON - 5 && y >= 13 {
+                continue;
+            }
+            let h = (hy as usize * ICON_W + hx as usize) * 4;
+            if hud[h + 3] != 0 && hud[h..h + 4] != ring[h..h + 4] {
+                let o = (y * INV_ICON + x) * 4;
+                out[o..o + 4].copy_from_slice(&hud[h..h + 4]);
+            }
+        }
+    }
+    out
+}
+
+/// Items mit Anzahl (Bomben, Bogen): die Anzahl überdeckt im Spiel die untere rechte Ecke des Items – diesen Bereich
+/// entfernen; die Bomben sind symmetrisch, dort wird die Ecke von links gespiegelt ergänzt
+pub fn clean_counted(img: &mut [u8], item: u8) {
+    if !minish::COUNTED.contains(&item) {
+        return;
+    }
+    let s = INV_ICON;
+    let bomb = matches!(item, 7 | 8);
+    for y in 11..s {
+        for x in 12..s {
+            let o = (y * s + x) * 4;
+            img[o + 3] = 0;
+            if bomb {
+                let mx = 17usize.saturating_sub(x);
+                let m = (y * s + mx) * 4;
+                if mx < 12 && img[m + 3] != 0 {
+                    let px = [img[m], img[m + 1], img[m + 2], 255];
+                    img[o..o + 4].copy_from_slice(&px);
+                }
+            }
+        }
+    }
+}
+
 /// Tastenfeld zusammensetzen: Kreis (mit Buchstabe) und darauf die Item-Grafik an `off`
 pub fn compose_slot(base: &[u8], item: &[u8], off: (isize, isize)) -> Vec<u8> {
     let mut out = base.to_vec();
@@ -1055,6 +1132,37 @@ pub fn compose_slot(base: &[u8], item: &[u8], off: (isize, isize)) -> Vec<u8> {
             }
         }
     }
+    out
+}
+
+/// Item-Grafik aus einem Figuren-Bild des Item-Menüs (`capture_sprites`) ausschneiden: INV_ICON² um das Kästchen
+/// mit Ankerpunkt (cx, cy), ohne Zahlen daneben, ohne Ecken des Menü-Cursors und ohne Markierung des B-Items
+pub fn crop_inv_icon(px: &[u8], w: usize, h: usize, cx: usize, cy: usize, under_cursor: bool) -> Vec<u8> {
+    const S: usize = INV_ICON;
+    let mut out = vec![0u8; S * S * 4];
+    for y in 0..S {
+        for x in 0..S {
+            let (fx, fy) = ((cx + x) as isize - 9, (cy + y) as isize - 16);
+            if fx < 0 || fy < 0 || fx as usize >= w || fy as usize >= h {
+                continue;
+            }
+            // Zahlen (Bomben, Pfeile) stehen unten rechts neben dem Item
+            if x >= S - 3 && y >= 11 {
+                continue;
+            }
+            let i = (fy as usize * w + fx as usize) * 4;
+            let p = &px[i..i + 4];
+            let magenta = p[0] >= 200 && p[1] <= 60 && p[2] >= 200;
+            // Ecken des Menü-Cursors (rot) – nur in den Ecken und nur beim Item unter dem Cursor
+            let corner = (x < 4 || x >= S - 4) && (y < 4 || y >= S - 4);
+            let red = under_cursor && corner && p[0] >= 200 && p[1] <= 60 && p[2] <= 60;
+            if !magenta && !red {
+                let o = (y * S + x) * 4;
+                out[o..o + 4].copy_from_slice(&[p[0], p[1], p[2], 255]);
+            }
+        }
+    }
+    peel_highlight(&mut out, S);
     out
 }
 
@@ -1466,6 +1574,44 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
         dump(&g, "rc_full");
         println!("Bild {}x{}, hud {}, B={:?} A={:?}", g.w, g.h, g.hud_visible(), g.peek(minish::EQUIP_B, 1), g.peek(minish::EQUIP_A, 1));
         let st2 = g.save_state().unwrap();
+        // Vergleich: B-Feld im Spielbild gegen die Aufnahme des leeren Felds (GBA_RINGTEST)
+        if std::env::var_os("GBA_RINGTEST").is_some() {
+            let (bx, by) = g.b_box().unwrap();
+            let frame = g.frame.clone();
+            let fw = g.w;
+            let cap = g.capture_icon(0).unwrap();
+            let mut lines = String::new();
+            for y in 0..ICON_H {
+                for x in 0..ICON_W {
+                    let i = ((by as usize + y) * fw + bx as usize + x) * 4;
+                    let f = &frame[i..i + 3];
+                    let o = (y * ICON_W + x) * 4;
+                    let c = &cap[o..o + 4];
+                    lines.push(if c[3] == 0 { if f[0] < 60 && f[1] < 60 && f[2] < 80 { '#' } else { '.' } } else if c[..3] == *f { '=' } else { 'x' });
+                }
+                lines.push('\n');
+            }
+            println!("Ring-Vergleich (. Hintergrund, # dunkel im Bild aber nicht aufgenommen, = gleich, x anders):\n{lines}");
+            let mut yi = cap.clone();
+            super::ui::letter_y(&mut yi);
+            let mut l2 = String::new();
+            for yy in 0..ICON_H {
+                for x in 0..ICON_W {
+                    let o = (yy * ICON_W + x) * 4;
+                    l2.push(if cap[o + 3] == 0 {
+                        '.'
+                    } else if cap[o..o + 4] == yi[o..o + 4] {
+                        '='
+                    } else if yi[o..o + 3] == [0x19, 0x27, 0x2e] {
+                        'Y'
+                    } else {
+                        'o'
+                    });
+                }
+                l2.push('\n');
+            }
+            println!("B -> Y (= gleich, Y neuer Buchstabe, o alter Buchstabe überdeckt):\n{l2}");
+        }
         // Item-Symbole (wie fürs Y-Feld): leeres Feld, einige Items
         let own = g.owned_items();
         let mut icons = Vec::new();
@@ -1548,6 +1694,108 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
         g.load_state(&st2);
         g.run_frame(0);
         assert_eq!(a, g.frame, "Laden ergibt ein anderes Bild");
+    }
+
+    /// Picori: jedes Item einzeln prüfen – Y-Feld (leerer Y-Kreis + Inventar-Grafik) gegen das echte B-Feld desselben
+    /// Items. Abweichen darf nur der Buchstabe. Schreibt `rc_items_check.bmp` (je Item: B-Feld, Y-Feld, Kästchen der
+    /// Item-Leiste) und gibt je Item die Zahl der abweichenden Pixel außerhalb des Buchstabens aus.
+    #[test]
+    #[ignore]
+    fn dev_rc_items() {
+        let (Ok(p), Ok(st)) = (std::env::var("PASTLINK_GBA_ROM"), std::env::var("GBA_RC_STATE")) else { return };
+        let out = std::env::var("PASTLINK_OUT").unwrap_or_else(|_| ".".into());
+        let mut g = Gba::load_with(Path::new(&p), true, false).unwrap();
+        while g.loading() {
+            g.run_frame(0);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let raw = lz4_flex::decompress_size_prepended(&std::fs::read(st).unwrap()).unwrap();
+        assert!(g.load_state(&raw));
+        for _ in 0..20 {
+            g.run_frame(0);
+        }
+        // Item-Menü öffnen, alle Items als Figuren aufnehmen
+        for f in 0..90 {
+            g.run_frame(if f < 3 { 0x1000 } else { 0 });
+        }
+        let cursor = g.menu_item().expect("Item-Menü nicht offen");
+        let (spr, w, h) = g.capture_sprites().unwrap();
+        let own = g.owned_items();
+        let mut inv = std::collections::HashMap::new();
+        for &i in &own {
+            let pos = g.menu_pos(i).or_else(|| g.menu_pos(match i { 7 => 8, 8 => 7, 15 => 16, x => x }));
+            if let Some((cx, cy)) = pos {
+                if !minish::COUNTED.contains(&i) {
+                    inv.insert(i, crop_inv_icon(&spr, w, h, cx + w.saturating_sub(W) / 2, cy, cursor == i));
+                }
+            }
+        }
+        // Menü schließen
+        for f in 0..90 {
+            g.run_frame(if f < 3 { 0x1000 } else { 0 });
+        }
+        assert!(g.menu_item().is_none(), "Item-Menü noch offen");
+        let ring = g.capture_icon(0).expect("leeres Feld");
+        let mut base = ring.clone();
+        super::ui::letter_y(&mut base);
+        let mut cols: Vec<Vec<crate::gfx::Color32>> = Vec::new();
+        let mut off_all = None;
+        println!("Item  Abweichung(außer Buchstabe)  Lage");
+        for &i in &own {
+            let Some(truth) = g.capture_icon(i) else {
+                println!("{i:>4}  keine B-Aufnahme");
+                continue;
+            };
+            let empty = vec![0u8; INV_ICON * INV_ICON * 4];
+            let item = inv.get(&i).unwrap_or(&empty);
+            let off = find_item_offset(&truth, item);
+            if off_all.is_none() {
+                off_all = off;
+            }
+            let ours = if std::env::var_os("GBA_FROM_INV").is_some() { compose_slot(&base, item, off.or(off_all).unwrap_or((1, 4))) } else { slot_from_b(&base, &truth, &ring) };
+            // Abweichung außerhalb des Buchstabenbereichs (Mitte des Kreises)
+            let mut bad = 0;
+            for y in 0..ICON_H {
+                for x in 0..ICON_W {
+                    let o = (y * ICON_W + x) * 4;
+                    let letter = (10..=15).contains(&x) && (18..=24).contains(&y);
+                    let same = (truth[o + 3] == 0 && ours[o + 3] == 0) || truth[o..o + 4] == ours[o..o + 4];
+                    if !same && !letter {
+                        bad += 1;
+                    }
+                }
+            }
+            println!("{i:>4}  {bad:>4}  {off:?}  {}", minish::name(i, false));
+            let to_c = |im: &[u8], o: usize| if im[o + 3] == 0 { crate::gfx::Color32::from_rgb(255, 0, 255) } else { crate::gfx::Color32::from_rgb(im[o], im[o + 1], im[o + 2]) };
+            let mut derived = item_from_b(&truth, &ring, off_all.unwrap_or((1, 4)));
+            clean_counted(&mut derived, i);
+            let tile = bar_tile(if inv.contains_key(&i) { item } else { &derived }, false);
+            let mut col = Vec::new();
+            for y in 0..ICON_H {
+                for x in 0..ICON_W {
+                    col.push(to_c(&truth, (y * ICON_W + x) * 4));
+                }
+            }
+            for y in 0..ICON_H {
+                for x in 0..ICON_W {
+                    col.push(to_c(&ours, (y * ICON_W + x) * 4));
+                }
+            }
+            for y in 0..TILE_H {
+                for x in 0..ICON_W {
+                    col.push(if x < TILE_W { tile[y * TILE_W + x] } else { crate::gfx::Color32::from_rgb(255, 0, 255) });
+                }
+            }
+            cols.push(col);
+        }
+        let hh = ICON_H * 2 + TILE_H;
+        let mut px = Vec::new();
+        for y in 0..hh {
+            for col in &cols {
+                px.extend_from_slice(&col[y * ICON_W..(y + 1) * ICON_W]);
+            }
+        }
+        crate::devtest::bmp(&format!("{out}/rc_items_check.bmp"), ICON_W * cols.len().max(1), hh, &px);
     }
 
     /// Erkennung der Spielanzeige: Logo (weiß), Titel, Spiel (`GBA_STATE`), Item-Menü

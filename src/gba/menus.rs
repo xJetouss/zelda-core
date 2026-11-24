@@ -27,18 +27,6 @@ pub(super) const MINISH_EU: &[(&str, &str, &str)] = &[
 22002AF6 2020
 22002AF8 2020"),
     ("Alle Schwerttechniken", "All sword techniques", "22002B44 5555"),
-    // Weltkarte (Item 71 = Bits 6/7 von Inventar-Byte 17; Kartenseite im Item-Menü: L) und je Dungeon Karte, Großer
-    // Schlüssel und Kompass
-    // (gSave.dungeonItems, Bits 1/2/4)
-    ("Weltkarte und alle Dungeon-Karten, Kompasse, Große Schlüssel", "World map and all dungeon maps, compasses, big keys", "22002B42 4000
-22002EAC 0707
-22002EAE 0707
-22002EB0 0707
-22002EB2 0707
-22002EB4 0707
-22002EB6 0707
-22002EB8 0707
-22002EBA 0707"),
 ];
 
 /// Spielkennung der laufenden GBA-ROM (z. B. „BZMP“)
@@ -208,6 +196,13 @@ impl Root {
                 chk!("gba_block_opp", t("Gegenrichtungen: zuletzt gedrückte gewinnt", "Opposite directions: last pressed wins"), s.block_opposite);
                 v.push(Self::note(t("GBA-Tasten: A, B, L, R, Start, Select und Steuerkreuz wie in der Tastenbelegung. Home / Switch-Home öffnet die Spielstände mit Einstellungen und Hauptmenü.", "GBA buttons: A, B, L, R, Start, Select and d-pad as mapped. Home opens the save states with settings and main menu.")));
             }
+            6 => {
+                // Spiel: Zusatzfunktionen für The Minish Cap an/aus
+                v.push(Self::heading(t("The Minish Cap", "The Minish Cap")));
+                chk!("gba_y", t("Y-Taste (zusätzliches Item auf Y)", "Y button (extra item on Y)"), s.gba_y);
+                chk!("gba_bar", t("Item-Leiste über das Steuerkreuz (↓ B, → A, ← Y)", "Item bar on the d-pad (↓ B, → A, ← Y)"), s.gba_bar);
+                chk!("gba_map", t("Weltkarte von Anfang an (Item-Menü: L)", "World map from the start (item menu: L)"), s.gba_map);
+            }
             7 => {
                 v.push(self.item("gba_cheats", t("Cheat-Liste…", "Cheat list…"), String::new(), true, true, cx, |r| r.app.gba.win_cheats = true));
                 if matches!(game_code(self).as_str(), "BZMP" | "BZME") {
@@ -285,7 +280,7 @@ impl Root {
                 pl.push(line(t("Aktuelle Herzen", "Current hearts"), s2));
             }
             v.push(section(t("Spieler", "Player"), pl).into_any_element());
-            let inv = vec![preset(self, 2, cx), preset(self, 3, cx), preset(self, 4, cx), preset(self, 5, cx), preset(self, 6, cx), preset(self, 8, cx)];
+            let inv = vec![preset(self, 2, cx), preset(self, 3, cx), preset(self, 4, cx), preset(self, 5, cx), preset(self, 6, cx)];
             let mut ib = vec![grid(2, inv, 12.0).into_any_element()];
             ib.push(
                 row()
@@ -302,12 +297,6 @@ impl Root {
                             g.run_once(MINISH_EU[7].2);
                         }
                         r.app.msg(tr(en, "Alle Schwerttechniken erhalten", "All sword techniques given"));
-                    }))
-                    .child(button("gba-give-maps", t("Alle Karten geben", "Give all maps"), has, cx, move |r| {
-                        if let Some(g) = r.app.gba.game.as_mut() {
-                            g.run_once(MINISH_EU[8].2);
-                        }
-                        r.app.msg(tr(en, "Weltkarte und alle Dungeon-Karten erhalten", "World map and all dungeon maps given"));
                     }))
                     .child(button("gba-give-20", t("20 Herzcontainer", "20 heart containers"), has, cx, move |r| {
                         if let Some(g) = r.app.gba.game.as_mut() {

@@ -262,6 +262,13 @@ impl App {
         let save_sram = self.s.save_sram;
         let Some(g) = self.gba.game.as_mut() else { return };
         g.save_sav = save_sram;
+        // Einstellungen „Spiel“: Weltkarte von Anfang an (mGBA braucht dafür die Cheats neu)
+        if g.force_map != self.s.gba_map {
+            g.force_map = self.s.gba_map;
+            g.apply_cheats();
+        }
+        // Y-Taste aus: Y kommt im Spiel nicht an
+        let pad = if self.s.gba_y { pad } else { pad & !0x4000 };
         // Item-Menü (Start): Y legt das Item unter dem Cursor auf Y – wie A und B im Spiel
         let mut pad = pad;
         let y_now = pad & 0x4000 != 0;
@@ -401,6 +408,8 @@ impl App {
         } else {
             None
         };
+        // Einstellungen „Spiel“: Item-Leiste aus, Y-Taste aus (dann keine Leiste für Y)
+        let want = if !self.s.gba_bar || (want == Some(0) && !self.s.gba_y) { None } else { want };
         let held = want.is_some() && !blocked;
         let dir_x = self.qm_dir.x;
         let Some(g) = self.gba.game.as_mut() else { return (pad, blocked) };
@@ -539,38 +548,15 @@ impl App {
                         for item in ids {
                             let Some((cx, cy)) = g.menu_pos(item) else { continue };
                             let cx = cx + dx;
-                            // das Item (18×18), ohne Zahlen daneben und ohne Ecken des Menü-Cursors
-                            const S: usize = super::INV_ICON;
-                            let mut out = vec![0u8; S * S * 4];
-                            for y in 0..S {
-                                for x in 0..S {
-                                    let (fx, fy) = ((cx + x) as isize - 9, (cy + y) as isize - 16);
-                                    if fx < 0 || fy < 0 || fx as usize >= w || fy as usize >= h {
-                                        continue;
-                                    }
-                                    // Zahlen (Bomben, Pfeile) stehen unten rechts neben dem Item
-                                    if x >= S - 3 && y >= 11 {
-                                        continue;
-                                    }
-                                    let i = (fy as usize * w + fx as usize) * 4;
-                                    let p = &px[i..i + 4];
-                                    let magenta = p[0] >= 200 && p[1] <= 60 && p[2] >= 200;
-                                    // Ecken des Menü-Cursors (rot) – nur in den Ecken und nur beim Item unter dem Cursor
-                                    let corner = (x < 4 || x >= S - 4) && (y < 4 || y >= S - 4);
-                                    let red = cursor == item && corner && p[0] >= 200 && p[1] <= 60 && p[2] <= 60;
-                                    if !magenta && !red {
-                                        let o = (y * S + x) * 4;
-                                        out[o..o + 4].copy_from_slice(&[p[0], p[1], p[2], 255]);
-                                    }
-                                }
+                            // Bomben, Fernzünder-Bomben, Bogen: im Item-Menü steht die Anzahl als eigene Figur direkt
+                            // daneben – diese Grafiken kommen sauberer aus dem B-Feld (siehe unten)
+                            if super::minish::COUNTED.contains(&item) {
+                                continue;
                             }
-                            super::peel_highlight(&mut out, S);
+                            let out = super::crop_inv_icon(&px, w, h, cx, cy, cursor == item);
                             if out.chunks_exact(4).filter(|p| p[3] != 0).count() > 12 {
-                                let key = match item {
-                                    8 if !self.gba.icons_inv.contains_key(&7) => 7,
-                                    16 => 15,
-                                    i => i,
-                                };
+                                // Laterne an/aus sieht gleich aus; Bomben und Fernzünder-Bomben nicht
+                                let key = if item == 16 { 15 } else { item };
                                 self.gba.icons_inv.insert(key, out.clone());
                                 self.gba.icons_inv.insert(item, out);
                             }
@@ -640,6 +626,15 @@ impl App {
                 for (i, img) in ids.iter().zip(super::strip_ring(&imgs)) {
                     // Ersatz, solange das Item nicht aus dem Inventar aufgenommen ist: das Item (oben links im B-Feld)
                     // auf 16×16 zuschneiden – ohne Zahlen und Kreisreste darunter
+                    // genauer: aus der B-Aufnahme minus leerem B-Kreis (wie das Y-Feld)
+                    if !self.gba.icons_inv.contains_key(i) {
+                        if let (Some(hud), Some(ring)) = (self.gba.icons_rgba.get(i), self.gba.ring_raw.as_ref()) {
+                            let mut out = super::item_from_b(hud, ring, self.gba.item_off.unwrap_or((1, 4)));
+                            super::clean_counted(&mut out, *i);
+                            self.gba.icons_inv.insert(*i, out);
+                            self.gba.inv_tex.clear();
+                        }
+                    }
                     if !self.gba.icons_inv.contains_key(i) {
                         const S: usize = super::INV_ICON;
                         let mut out = vec![0u8; S * S * 4];
@@ -773,27 +768,19 @@ impl App {
             let col = |p: &[u8]| lut[((p[0] >> 3) as usize) | ((p[1] >> 3) as usize) << 5 | ((p[2] >> 3) as usize) << 10];
             self.gba.cur.extend(g.frame.chunks_exact(4).map(col));
             // Y-Feld links neben B ins Bild setzen (geht dann wie B/A durch Farbtabelle und HD-Filter)
-            if self.gba.hud && g.is_minish() && self.gba.cur.len() == w * h {
+            if self.gba.hud && g.is_minish() && self.s.gba_y && self.gba.cur.len() == w * h {
                 // Y-Feld = leerer Y-Kreis + Item-Grafik aus dem Inventar (an der Stelle, wo das Spiel Items auf B/A
                 // zeichnet) – so trägt es nie den Buchstaben B und ist auch im Item-Menü sofort da
                 let y_item = self.gba.y_shown;
-                let composed = match (y_item, self.gba.icons_rgba.get(&0), self.gba.icons_inv.get(&y_item)) {
-                    (i, Some(base), Some(item)) if i != 0 => Some(super::compose_slot(base, item, self.gba.item_off.unwrap_or((3, 1)))),
-                    // ohne Inventar-Grafik: das Item aus der B-Aufnahme lösen (was sich vom leeren B-Kreis unterscheidet)
-                    (i, Some(base), None) if i != 0 => match (self.gba.icons_rgba.get(&i), self.gba.ring_raw.as_ref()) {
-                        (Some(hud), Some(ring)) => {
-                            let mut out = base.clone();
-                            for p in 0..super::ICON_W * super::ICON_H {
-                                let o = p * 4;
-                                if hud[o + 3] != 0 && hud[o..o + 4] != ring[o..o + 4] {
-                                    out[o..o + 4].copy_from_slice(&hud[o..o + 4]);
-                                }
-                            }
-                            Some(out)
-                        }
+                // genau wie B: das Item aus seiner echten B-Aufnahme lösen (was sich vom leeren B-Kreis unterscheidet,
+                // samt Anzahl bei Bomben/Pfeilen) und auf den Y-Kreis setzen; sonst die Inventar-Grafik
+                let composed = match (y_item, self.gba.icons_rgba.get(&0)) {
+                    (0, _) | (_, None) => None,
+                    (i, Some(base)) => match (self.gba.icons_rgba.get(&i), self.gba.ring_raw.as_ref(), self.gba.icons_inv.get(&i)) {
+                        (Some(hud), Some(ring), _) => Some(super::slot_from_b(base, hud, ring)),
+                        (_, _, Some(item)) => Some(super::compose_slot(base, item, self.gba.item_off.unwrap_or((1, 4)))),
                         _ => None,
                     },
-                    _ => None,
                 };
                 let img = if y_item != 0 { composed.as_ref().or_else(|| self.gba.icons_rgba.get(&y_item)) } else { None };
                 if let Some(img) = img.or_else(|| self.gba.icons_rgba.get(&0)) {
@@ -845,7 +832,7 @@ impl App {
                 let blue = col(&[120, 216, 243, 255]);
                 let white = col(&[243, 243, 243, 255]);
                 let dx = w.saturating_sub(super::W) / 2;
-                for item in [a_item, self.gba.y_shown] {
+                for item in [a_item, if self.s.gba_y { self.gba.y_shown } else { 0 }] {
                     // Bomben/Fernzünder-Bomben und Laterne an/aus stehen im Menü auf demselben Platz
                     let alt = match item {
                         7 => 8,
@@ -1139,6 +1126,8 @@ impl App {
                 "d" => pad |= 0x0400,
                 "l" => pad |= 0x0200,
                 "r" => pad |= 0x0100,
+                "Q" => pad |= 0x0020,
+                "E" => pad |= 0x0010,
                 "D" => dpad |= 1 << 10,
                 "L" => dpad |= 1 << 9,
                 "R" => dpad |= 1 << 8,
@@ -1303,10 +1292,12 @@ pub(crate) fn letter_y(img: &mut [u8]) {
     let (cx, cy) = ((x0 + x1) as f32 / 2.0, (y0 + y1) as f32 / 2.0);
     let rad = ((x1 - x0) as f32 / 2.0).min((y1 - y0) as f32 / 2.0) - 2.0;
     let inner: Vec<(usize, usize)> = (y0..=y1).flat_map(|y| (x0..=x1).map(move |x| (x, y))).filter(|&(x, y)| ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt() < rad).collect();
+    // Buchstabe nur in der Mitte suchen: der Schatten des Kreises hat dieselbe dunkle Farbe und muss bleiben
+    let core: Vec<(usize, usize)> = inner.iter().copied().filter(|&(x, y)| (x as f32 - cx).abs() <= 3.6 && (y as f32 - cy).abs() <= 3.6).collect();
     // Buchstabe = dunkelste Farbe innen; Füllung = häufigste übrige Farbe innen (graublau)
-    let Some(lcol) = inner.iter().map(|&(x, y)| px(img, x, y)).filter(|p| p[3] != 0).min_by_key(|&p| lum(p)) else { return };
+    let Some(lcol) = core.iter().map(|&(x, y)| px(img, x, y)).filter(|p| p[3] != 0).min_by_key(|&p| lum(p)) else { return };
     let mut counts: Vec<([u8; 4], usize)> = Vec::new();
-    for &(x, y) in &inner {
+    for &(x, y) in &core {
         let p = px(img, x, y);
         if p[3] == 0 || p == lcol {
             continue;
@@ -1317,7 +1308,7 @@ pub(crate) fn letter_y(img: &mut [u8]) {
         }
     }
     let Some(&(fill, _)) = counts.iter().max_by_key(|c| c.1) else { return };
-    let letter: Vec<(usize, usize)> = inner.iter().copied().filter(|&(x, y)| px(img, x, y) == lcol).collect();
+    let letter: Vec<(usize, usize)> = core.iter().copied().filter(|&(x, y)| px(img, x, y) == lcol).collect();
     if letter.is_empty() {
         return;
     }
