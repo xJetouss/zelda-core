@@ -16,6 +16,10 @@ def patch(rel, pairs):
     for a, b in pairs:
         if b in d:
             continue
+        # schon geändert und von einem späteren Patch weiter angepasst: die Kommentarzeile des Patches steht schon da
+        key = next((l for l in b.splitlines() if 'Zelda Core' in l), None)
+        if key is not None and key in d:
+            continue
         assert d.count(a) == 1, (rel, d.count(a), a[:70])
         d = d.replace(a, b)
         changed = True
@@ -104,7 +108,7 @@ void VBlankIntrWait(void) {
 patch('port/port_ppu.cpp', [
     ('extern "C" uint8_t gMain[]; // fix for MSVC (UWP PORT)', '''extern "C" uint8_t gMain[]; // fix for MSVC (UWP PORT)
 #ifdef TMC_CORE_DLL
-extern "C" int gTmcCoreHosted, gTmcCoreViewW, gTmcCoreViewH, gTmcCoreLayers;
+extern "C" int gTmcCoreHosted, gTmcCoreViewW, gTmcCoreViewH, gTmcCoreLayers, gTmcCoreNoObj;
 extern "C" void TmcCore_Present(const uint32_t* px, int w, int h, int pitch);
 #endif'''),
     ('''    if (sWindow != nullptr) {
@@ -132,6 +136,11 @@ extern "C" void TmcCore_Present(const uint32_t* px, int w, int h, int pitch);
     const uint8_t coreDispHi = gIoMem[0x01];
     if (gTmcCoreHosted)
         gIoMem[0x01] = (uint8_t)(coreDispHi & ~(~gTmcCoreLayers & 0x0F));
+    if (gTmcCoreHosted && gTmcCoreNoObj)
+        gIoMem[0x01] = (uint8_t)(gIoMem[0x01] & ~0x10);
+    const uint16_t coreBackdrop = gBgPltt[0];
+    if (gTmcCoreHosted && gTmcCoreLayers != 0x0F)
+        gBgPltt[0] = 0x7C1F;
 #endif
 
     dispcnt = (uint16_t)(gIoMem[0x00] | (gIoMem[0x01] << 8));'''),
@@ -142,6 +151,7 @@ extern "C" void TmcCore_Present(const uint32_t* px, int w, int h, int pitch);
     /* Zelda Core zeigt das Bild selbst an (eigene Filter/Upscaler) */
     if (gTmcCoreHosted) {
         gIoMem[0x01] = coreDispHi;
+        gBgPltt[0] = coreBackdrop;
         TmcCore_Present(virtuappu_frame_buffer, virtuappu_registers.frame_width, MODE1_GBA_HEIGHT, MODE1_GBA_WIDTH);
         return;
     }
@@ -319,21 +329,28 @@ patch('port/port_save.c', [
     return !sEepromWriteBlocked && !sEepromDirty;'''),
 ])
 
-# Aufnahme der Item-Symbole: Hintergrundfarbe Magenta statt Schwarz, damit die schwarzen Umrisse der Figuren erhalten
-# bleiben (Zelda Core erkennt den Hintergrund an der Farbe)
-patch('port/port_ppu.cpp', [
-    ('''        gIoMem[0x01] = (uint8_t)(coreDispHi & ~(~gTmcCoreLayers & 0x0F));
-#endif
+# (Magenta-Hintergrund für Aufnahmen und Bild ohne Figuren für die Karte stehen oben bei port_ppu.cpp)
 
-    dispcnt''', '''        gIoMem[0x01] = (uint8_t)(coreDispHi & ~(~gTmcCoreLayers & 0x0F));
-    const uint16_t coreBackdrop = gBgPltt[0];
-    if (gTmcCoreHosted && gTmcCoreLayers != 0x0F)
-        gBgPltt[0] = 0x7C1F;
+# eigene Karte (Zelda Core): Blättert man im Pausenmenü zur Kartenseite, bleibt das Spiel auf der aktuellen Seite
+# und meldet das – Zelda Core zeigt dann seine eigene Karte (tmc_map_request / tmc_menu_goto in tmc_core.c)
+patch('src/menu/pauseMenu.c', [
+    ('''    if (sub_080A51F4() && (gMenu.field_0xc != NULL)) {
+        iVar1 = -1;''', '''#ifdef TMC_CORE_DLL
+    extern int gTmcCoreOwnMap, gTmcCoreMapReq;
 #endif
-
-    dispcnt'''),
-    ('''        gIoMem[0x01] = coreDispHi;
-        TmcCore_Present''', '''        gIoMem[0x01] = coreDispHi;
-        gBgPltt[0] = coreBackdrop;
-        TmcCore_Present'''),
+    if (sub_080A51F4() && (gMenu.field_0xc != NULL)) {
+        iVar1 = -1;'''),
+    ('''        if (iVar1 >= 0) {
+            switch (bVar5 = gMenu.field_0xc[iVar1]) {''', '''#ifdef TMC_CORE_DLL
+        /* Zelda Core: Kartenseite durch die eigene Karte ersetzen */
+        if (iVar1 >= 0 && gTmcCoreOwnMap) {
+            s32 t = gMenu.field_0xc[iVar1];
+            if (t == 4 || t == 5 || t == 6 || t == 0xf) {
+                gTmcCoreMapReq = 1;
+                iVar1 = -1;
+            }
+        }
+#endif
+        if (iVar1 >= 0) {
+            switch (bVar5 = gMenu.field_0xc[iVar1]) {'''),
 ])

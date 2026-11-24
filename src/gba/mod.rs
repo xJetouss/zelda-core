@@ -6,6 +6,8 @@
 #[cfg(pastlink_gba)]
 pub mod core;
 pub mod picori;
+pub mod tmcmap;
+pub mod mapui;
 pub mod ui;
 
 use serde::{Deserialize, Serialize};
@@ -760,6 +762,41 @@ mod running {
         /// Picori: linke obere Ecke des B-Feld-Ausschnitts (wie ICON_X/ICON_Y), nur wenn das B-Feld ganz zu sehen ist
         pub fn b_box(&self) -> Option<(isize, isize)> {
             self.rc.as_ref().and_then(|c| c.button_b()).map(|(x, y)| (x as isize - 10, y as isize - 20))
+        }
+
+        /// Karte (nur PC-Fassung): Ansicht, Bild ohne Figuren, Räume, Gebiete, Fundorte
+        pub fn map_view(&self) -> Option<[i32; 12]> {
+            self.rc.as_ref().and_then(|c| c.map_view())
+        }
+        pub fn map_render_bg(&self) -> Option<(Vec<u8>, usize, usize)> {
+            self.rc.as_ref().and_then(|c| c.render_bg())
+        }
+        pub fn room_rect(&self, area: u8, room: u8) -> Option<[i32; 4]> {
+            self.rc.as_ref().and_then(|c| c.room_rect(area, room))
+        }
+        pub fn area_kind(&self, area: u8) -> i32 {
+            self.rc.as_ref().map_or(0, |c| c.area_kind(area))
+        }
+        pub fn locations(&self, logic: &str) -> Vec<(String, u32, i32)> {
+            self.rc.as_ref().map_or(Vec::new(), |c| c.locations(logic))
+        }
+        pub fn set_own_map(&self, on: bool) {
+            if let Some(c) = &self.rc {
+                c.set_own_map(on);
+            }
+        }
+        pub fn map_request(&self) -> i32 {
+            self.rc.as_ref().map_or(0, |c| c.map_request())
+        }
+        pub fn menu_goto(&self, which: i32) -> bool {
+            self.rc.as_ref().is_some_and(|c| c.menu_goto(which))
+        }
+        /// läuft die PC-Fassung (Picori)?
+        pub fn is_recomp(&self) -> bool {
+            self.rc.is_some()
+        }
+        pub fn loc_done(&self, key: u32) -> Option<bool> {
+            self.rc.as_ref().and_then(|c| c.loc_done(key))
         }
 
         /// Entwicklung: Werte aus Picori zur Fehlersuche
@@ -1796,6 +1833,88 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
             }
         }
         crate::devtest::bmp(&format!("{out}/rc_items_check.bmp"), ICON_W * cols.len().max(1), hh, &px);
+    }
+
+    /// Picori: Grundlagen der Karte – Ansicht beim Laufen, Bild ohne Figuren, Fundorte mit Position und Stand
+    #[test]
+    #[ignore]
+    fn dev_rc_mapbase() {
+        let (Ok(p), Ok(st)) = (std::env::var("PASTLINK_GBA_ROM"), std::env::var("GBA_RC_STATE")) else { return };
+        let out = std::env::var("PASTLINK_OUT").unwrap_or_else(|_| ".".into());
+        let mut g = Gba::load_with(Path::new(&p), true, false).unwrap();
+        while g.loading() {
+            g.run_frame(0);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let raw = std::fs::read(st).ok().and_then(|d| lz4_flex::decompress_size_prepended(&d).ok()).unwrap_or_default();
+        if !g.load_state(&raw) {
+            // Stand passt nicht zur DLL: vom Spielstand (.sav) aus ins Spiel drücken
+            let mut f = 0;
+            let mut in_files = 0u32;
+            while !(g.hud_visible() && f > 500) && f < 20000 {
+                let task = g.rc_debug(8) / 10000;
+                in_files = if task == 1 { in_files + 1 } else { 0 };
+                let k = match task {
+                    0 => if f % 60 < 3 { 0x1000 } else { 0 },
+                    1 if in_files < 60 => 0,
+                    1 if in_files < 200 => if in_files % 40 < 3 { 0x0800 } else { 0 },
+                    _ => if f % 40 < 3 { 0x0080 } else if f % 40 > 20 && f % 40 < 23 { 0x1000 } else { 0 },
+                };
+                g.run_frame(k);
+                if f % 500 == 0 {
+                    let c: Vec<crate::gfx::Color32> = g.frame.chunks_exact(4).map(|c| crate::gfx::Color32::from_rgb(c[0], c[1], c[2])).collect();
+                    crate::devtest::bmp(&format!("{out}/boot{f:04}.bmp"), g.w, g.h, &c);
+                }
+                f += 1;
+            }
+            for _ in 0..200 {
+                g.run_frame(0);
+            }
+            println!("im Spiel nach {f} Bildern");
+            if let Ok(o) = std::env::var("GBA_SAVE_TO") {
+                std::fs::write(o, lz4_flex::compress_prepend_size(&g.save_state().unwrap())).unwrap();
+            }
+        }
+        for f in 0..120 {
+            g.run_frame(if f > 20 { 0x0100 } else { 0 });
+            if f % 20 == 0 {
+                println!("f{f} Ansicht {:?}", g.map_view());
+            }
+        }
+        if let Some((px, w, h)) = g.map_render_bg() {
+            let c: Vec<crate::gfx::Color32> = px.chunks_exact(4).map(|c| crate::gfx::Color32::from_rgb(c[0], c[1], c[2])).collect();
+            crate::devtest::bmp(&format!("{out}/rc_bg.bmp"), w, h, &c);
+            let c: Vec<crate::gfx::Color32> = g.frame.chunks_exact(4).map(|c| crate::gfx::Color32::from_rgb(c[0], c[1], c[2])).collect();
+            crate::devtest::bmp(&format!("{out}/rc_fg.bmp"), g.w, g.h, &c);
+        }
+        g.set_view(16, 9, true);
+        for _ in 0..30 {
+            g.run_frame(0);
+        }
+        println!("breit: Ansicht {:?}", g.map_view());
+        if let Some((px, w, h)) = g.map_render_bg() {
+            let c: Vec<crate::gfx::Color32> = px.chunks_exact(4).map(|c| crate::gfx::Color32::from_rgb(c[0], c[1], c[2])).collect();
+            crate::devtest::bmp(&format!("{out}/rc_bg_wide.bmp"), w, h, &c);
+        }
+        let locs = g.locations(super::tmcmap::LOGIC);
+        println!("Fundorte: {}", locs.len());
+        let mut kinds = std::collections::HashMap::new();
+        let mut placed = 0;
+        for (n, key, ty) in &locs {
+            let k = super::tmcmap::LocKind::from_name(n);
+            *kinds.entry(format!("{k:?}")).or_insert(0) += 1;
+            if key & 0x8000_0000 == 0 && *key != u32::MAX {
+                let (a, r) = ((key >> 16) as u8, (key >> 8) as u8);
+                if g.room_rect(a, r).is_some() {
+                    placed += 1;
+                }
+            }
+            let _ = ty;
+        }
+        println!("Arten: {kinds:?}  mit Raum: {placed}");
+        for (n, key, ty) in locs.iter().take(25) {
+            println!("  {n} key {key:08x} typ {ty} fertig {:?} Gebiet-Art {}", g.loc_done(*key), g.area_kind((key >> 16) as u8));
+        }
     }
 
     /// Erkennung der Spielanzeige: Logo (weiß), Titel, Spiel (`GBA_STATE`), Item-Menü

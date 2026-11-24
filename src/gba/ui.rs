@@ -35,7 +35,7 @@ pub struct GbaView {
     /// neues Bild seit dem letzten Hochladen
     dirty: bool,
     /// Spielanzeige sichtbar (Y-Feld nur dann zeigen und Symbole nur dann aufnehmen)
-    hud: bool,
+    pub(crate) hud: bool,
     /// The Minish Cap: Symbole der Items (wie im B-Feld), leeres Y-Feld, Item-Leiste für die Y-Taste
     icons: HashMap<u8, gfx::TextureHandle>,
     y_empty: Option<gfx::TextureHandle>,
@@ -91,6 +91,8 @@ pub struct GbaView {
     b_patch: Option<Vec<u8>>,
     /// Entwicklung: Slot-Test (PASTLINK_GBA_SLOTTEST)
     dev_tick: u32,
+    /// The Minish Cap (PC-Fassung): eigene Karte
+    pub map: super::mapui::MapUi,
 }
 
 impl Default for GbaView {
@@ -150,6 +152,7 @@ impl Default for GbaView {
             y_checked: 0,
             b_patch: None,
             dev_tick: 0,
+            map: Default::default(),
         }
     }
 }
@@ -208,7 +211,7 @@ impl App {
                     self.win_states = true;
                 }
                 // Entwicklung: Spielstand gleich laden (PASTLINK_GBA_LOAD=Datei)
-                if let Some(b) = std::env::var_os("PASTLINK_GBA_LOAD").and_then(|f| std::fs::read(f).ok()) {
+                if let Some(b) = std::env::var_os("PASTLINK_GBA_LOAD").and_then(|f| std::fs::read(f).ok()).map(|b| lz4_flex::decompress_size_prepended(&b).unwrap_or(b)) {
                     if let Some(g) = self.gba.game.as_mut() {
                         g.load_state(&b);
                     }
@@ -223,6 +226,10 @@ impl App {
 
     /// GBA-Spiel beenden (Spielstand des Spiels wird geschrieben)
     pub(crate) fn gba_close(&mut self) {
+        if let Some(d) = self.gba.map.data.as_mut() {
+            d.save();
+        }
+        self.gba.map = Default::default();
         self.gba.game = None;
         self.gba.win_cheats = false;
         self.gba.tex = None;
@@ -390,6 +397,7 @@ impl App {
         if std::env::var_os("PASTLINK_GBA_SLOTTEST").is_some() {
             self.gba_slot_test();
         }
+        self.gba_map_update();
         self.gba_upload(ctx);
     }
 
@@ -1002,6 +1010,8 @@ impl App {
         }
         let gp_game = r.width() / gw;
         self.gba_draw_y(painter, r, gp_game);
+        // eigene Karte über dem Spielbild (ganze Fläche)
+        self.gba_map_draw(area, ctx);
         let gold = Color32::from_rgb(235, 200, 90);
         let ind = if self.turbo_on {
             Some(format!("⏩ TURBO ×{:.0}", self.s.turbo_speed))
@@ -1111,6 +1121,7 @@ impl App {
         let t = self.gba.play_frames as u32;
         let mut pad = 0u16;
         let mut dpad = 0u16;
+        let mut map_at = None;
         for e in spec.split(',') {
             let Some((k, at)) = e.split_once(':') else { continue };
             let Ok(at) = at.parse::<u32>() else { continue };
@@ -1131,7 +1142,15 @@ impl App {
                 "D" => dpad |= 1 << 10,
                 "L" => dpad |= 1 << 9,
                 "R" => dpad |= 1 << 8,
+                // Karte (Minus) – einmal je Eintrag
+                "m" => map_at = Some(at),
                 _ => {}
+            }
+        }
+        if let Some(at) = map_at {
+            if self.gba.map.dev_m != at {
+                self.gba.map.dev_m = at;
+                self.gba_map_toggle();
             }
         }
         self.ctl_dpad |= dpad;

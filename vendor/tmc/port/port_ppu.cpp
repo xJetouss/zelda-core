@@ -41,7 +41,7 @@ extern "C" void kmp_set_blocktime(int msec);
  * include/main.h). C linkage matches the engine's Main gMain. */
 extern "C" uint8_t gMain[]; // fix for MSVC (UWP PORT)
 #ifdef TMC_CORE_DLL
-extern "C" int gTmcCoreHosted, gTmcCoreViewW, gTmcCoreViewH, gTmcCoreLayers;
+extern "C" int gTmcCoreHosted, gTmcCoreViewW, gTmcCoreViewH, gTmcCoreLayers, gTmcCoreNoObj;
 extern "C" void TmcCore_Present(const uint32_t* px, int w, int h, int pitch);
 #endif
 /* Phase-timer hooks (defined in port_bios.c, C linkage). */
@@ -1393,6 +1393,8 @@ extern "C" void Port_PPU_PresentFrame(void) {
     const uint8_t coreDispHi = gIoMem[0x01];
     if (gTmcCoreHosted)
         gIoMem[0x01] = (uint8_t)(coreDispHi & ~(~gTmcCoreLayers & 0x0F));
+    if (gTmcCoreHosted && gTmcCoreNoObj)
+        gIoMem[0x01] = (uint8_t)(gIoMem[0x01] & ~0x10);
     const uint16_t coreBackdrop = gBgPltt[0];
     if (gTmcCoreHosted && gTmcCoreLayers != 0x0F)
         gBgPltt[0] = 0x7C1F;

@@ -129,6 +129,9 @@ void PauseMenu_Variant2(void) {
         gPauseMenuOptions.screen2 = 0xe; /* request menu close */
     }
 #endif
+#ifdef TMC_CORE_DLL
+    extern int gTmcCoreOwnMap, gTmcCoreMapReq;
+#endif
     if (sub_080A51F4() && (gMenu.field_0xc != NULL)) {
         iVar1 = -1;
         switch (gInput.newKeys) {
@@ -145,6 +148,16 @@ void PauseMenu_Variant2(void) {
                 iVar1 = 3;
                 break;
         }
+#ifdef TMC_CORE_DLL
+        /* Zelda Core: Kartenseite durch die eigene Karte ersetzen */
+        if (iVar1 >= 0 && gTmcCoreOwnMap) {
+            s32 t = gMenu.field_0xc[iVar1];
+            if (t == 4 || t == 5 || t == 6 || t == 0xf) {
+                gTmcCoreMapReq = 1;
+                iVar1 = -1;
+            }
+        }
+#endif
         if (iVar1 >= 0) {
             switch (bVar5 = gMenu.field_0xc[iVar1]) {
                 case 0:

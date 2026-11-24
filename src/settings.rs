@@ -100,6 +100,8 @@ pub struct Settings {
     pub gba_bar: bool,
     /// The Minish Cap: Weltkarte von Anfang an (Kartenseite im Item-Menü mit L)
     pub gba_map: bool,
+    /// The Minish Cap (PC-Fassung): eigene Karte (Minus / Kartenseite im Item-Menü) statt der Karte des Spiels
+    pub gba_ownmap: bool,
     /// GBA: Cheats und Y-Item je Spiel (Schlüssel: Dateiname der ROM ohne Endung)
     pub gba_games: std::collections::HashMap<String, crate::gba::GameCfg>,
     /// Recompiled-Modus: übersetzter ROM-Code statt CPU-Emulation (Spielstände bleiben austauschbar)
@@ -214,6 +216,7 @@ impl Default for Settings {
             gba_y: true,
             gba_bar: true,
             gba_map: true,
+            gba_ownmap: true,
             gba_games: std::collections::HashMap::new(),
             echo: true,
             voice_mute: 0,

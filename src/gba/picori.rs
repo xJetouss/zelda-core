@@ -17,6 +17,11 @@ type FSave = unsafe extern "C" fn(*const i8, i32);
 type FInt = unsafe extern "C" fn(i32);
 type FIntR = unsafe extern "C" fn(i32) -> i32;
 type FXY = unsafe extern "C" fn(*mut i32, *mut i32) -> i32;
+type FPtrI = unsafe extern "C" fn(*mut i32) -> i32;
+type FRoom = unsafe extern "C" fn(i32, i32, *mut i32) -> i32;
+type FLocLoad = unsafe extern "C" fn(*const u8, i32) -> i32;
+type FLocInfo = unsafe extern "C" fn(i32, *mut u8, i32, *mut u32, *mut i32) -> i32;
+type FLocDone = unsafe extern "C" fn(u32) -> i32;
 type FSize = unsafe extern "C" fn() -> usize;
 type FStSave = unsafe extern "C" fn(*mut u8, usize) -> i32;
 type FStLoad = unsafe extern "C" fn(*const u8, usize) -> i32;
@@ -44,6 +49,17 @@ struct Api {
     menu_pos: FIntR,
     button_b: FXY,
     debug: FIntR,
+    map_view: FPtrI,
+    render_bg: FFrame,
+    room_rect: FRoom,
+    loc_load: FLocLoad,
+    loc_count: FVoidI,
+    loc_info: FLocInfo,
+    loc_done: FLocDone,
+    area_kind: FIntR,
+    own_map: FInt,
+    map_request: FVoidI,
+    menu_goto: FIntR,
 }
 
 /// geladene DLL, ROM des laufenden Picori, Anfangszustand
@@ -110,6 +126,17 @@ fn load_api() -> Result<&'static Api, String> {
             menu_pos: f!("tmc_menu_pos"),
             button_b: f!("tmc_button_b"),
             debug: f!("tmc_debug"),
+            map_view: f!("tmc_view"),
+            render_bg: f!("tmc_render_bg"),
+            room_rect: f!("tmc_room_rect"),
+            loc_load: f!("tmc_loc_load"),
+            loc_count: f!("tmc_loc_count"),
+            loc_info: f!("tmc_loc_info"),
+            loc_done: f!("tmc_loc_done"),
+            area_kind: f!("tmc_area_kind"),
+            own_map: f!("tmc_set_own_map"),
+            map_request: f!("tmc_map_request"),
+            menu_goto: f!("tmc_menu_goto"),
         };
         Ok(Box::leak(Box::new(api)))
     }
@@ -321,6 +348,88 @@ impl Core {
         }
         let (mut x, mut y) = (0, 0);
         (unsafe { (self.api.button_b)(&mut x, &mut y) } != 0).then_some((x, y))
+    }
+
+    /// Karte: Gebiet, Raum, Oberwelt, Raum-Ursprung, Kamera, Raumgröße, Link, Bildbreite (None = nicht im Spiel)
+    pub fn map_view(&self) -> Option<[i32; 12]> {
+        if !self.ready {
+            return None;
+        }
+        let mut v = [0i32; 12];
+        (unsafe { (self.api.map_view)(v.as_mut_ptr()) } != 0).then_some(v)
+    }
+
+    /// Karte: das letzte Spielbild noch einmal ohne Figuren (RGBA, Breite, Höhe)
+    pub fn render_bg(&self) -> Option<(Vec<u8>, usize, usize)> {
+        if !self.ready {
+            return None;
+        }
+        let (mut w, mut h) = (0i32, 0i32);
+        let p = unsafe { (self.api.render_bg)(&mut w, &mut h) };
+        if p.is_null() || w <= 0 || h <= 0 {
+            return None;
+        }
+        let (w, h) = (w as usize, h as usize);
+        let px = unsafe { std::slice::from_raw_parts(p as *const u8, w * h * 4) }.to_vec();
+        Some((px, w, h))
+    }
+
+    /// Weltposition und Größe eines Raums
+    pub fn room_rect(&self, area: u8, room: u8) -> Option<[i32; 4]> {
+        let mut v = [0i32; 4];
+        (unsafe { (self.api.room_rect)(area as i32, room as i32, v.as_mut_ptr()) } != 0).then_some(v)
+    }
+
+    /// Gebiet: Bit 0 Oberwelt, Bit 1 Dungeon
+    pub fn area_kind(&self, area: u8) -> i32 {
+        unsafe { (self.api.area_kind)(area as i32) }
+    }
+
+    /// Fundorte aus der Randomizer-Logik von Picori: (Name, Schlüssel, Art)
+    pub fn locations(&self, logic: &str) -> Vec<(String, u32, i32)> {
+        if unsafe { (self.api.loc_load)(logic.as_ptr(), logic.len() as i32) } == 0 {
+            return Vec::new();
+        }
+        let n = unsafe { (self.api.loc_count)() }.max(0);
+        let mut v = Vec::new();
+        let mut buf = vec![0u8; 256];
+        for i in 0..n {
+            let (mut key, mut ty) = (0u32, 0i32);
+            if unsafe { (self.api.loc_info)(i, buf.as_mut_ptr(), buf.len() as i32, &mut key, &mut ty) } == 0 {
+                continue;
+            }
+            let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+            v.push((String::from_utf8_lossy(&buf[..end]).into_owned(), key, ty));
+        }
+        v
+    }
+
+    /// Fundort schon eingesammelt? None = unbekannt
+    pub fn loc_done(&self, key: u32) -> Option<bool> {
+        match unsafe { (self.api.loc_done)(key) } {
+            -1 => None,
+            v => Some(v != 0),
+        }
+    }
+
+    /// eigene Karte statt der Kartenseite des Pausenmenüs
+    pub fn set_own_map(&self, on: bool) {
+        if self.ready {
+            unsafe { (self.api.own_map)(on as i32) };
+        }
+    }
+
+    /// 1 = im Pausenmenü zur Kartenseite geblättert, 2 = Kartenseite des Spiels offen, 0 = nichts
+    pub fn map_request(&self) -> i32 {
+        if !self.ready {
+            return 0;
+        }
+        unsafe { (self.api.map_request)() }
+    }
+
+    /// Pausenmenü von der eigenen Karte aus: 1 = L-Seite, 2 = R-Seite, 0 = schließen
+    pub fn menu_goto(&self, which: i32) -> bool {
+        self.ready && unsafe { (self.api.menu_goto)(which) } != 0
     }
 
     /// Entwicklung: Werte aus dem Spiel (siehe tmc_debug)

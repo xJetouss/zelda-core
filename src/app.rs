@@ -1685,6 +1685,7 @@ impl App {
                     }
                 }
             }
+            Act::WinMap if self.gba.active() => self.gba_map_toggle(),
             Act::WinMap => {
                 if self.win_map {
                     self.win_map = false;
@@ -3521,9 +3522,19 @@ impl App {
         self.handle_rebind(ctx);
         let (mut pad, turbo, double, rewind) = self.gather_input(ctx);
         let menu_pad = pad | self.ctl_dpad;
-        // GBA-Modus: eigener Ablauf (keine Karte, kein Inventar, nichts am Spiel geändert)
+        // GBA-Modus: eigener Ablauf (kein Inventar, nichts am Spiel geändert); Minus = eigene Karte (Minish Cap)
         if self.gba.active() {
-            if self.win_states {
+            let minus_edge = self.minus_now && !self.minus_prev;
+            self.minus_prev = self.minus_now;
+            if minus_edge && !self.win_states {
+                self.gba_map_toggle();
+            }
+            if self.gba.map.open && !self.win_states {
+                let dt = ctx.input(|i| i.stable_dt).clamp(0.0, 0.1);
+                self.gba_map_input(menu_pad, dt);
+                self.states_prev_pad = menu_pad;
+                self.gba_frame(ctx, 0, false, false, focused, false, true);
+            } else if self.win_states {
                 // Spielstände per Controller/Tastatur – nichts geht ans Spiel
                 let pressed = menu_pad & !self.states_prev_pad;
                 self.states_prev_pad = menu_pad;

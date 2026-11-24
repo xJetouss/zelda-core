@@ -57,11 +57,24 @@ static int sMute;
 static char sRom[1024], sDir[1024];
 
 /* von port_ppu.cpp: fertiges Bild (ABGR8888 = RGBA-Bytes) */
+int gTmcCoreNoObj = 0;
+static int sCapture;
+static uint32_t sCap[FB_W * FB_H];
+static int sCapW, sCapH;
+
 void TmcCore_Present(const uint32_t* px, int w, int h, int pitch) {
     if (w > FB_W)
         w = FB_W;
     if (h > FB_H)
         h = FB_H;
+    if (sCapture) {
+        /* Karte: zusätzliches Bild ohne Figuren in einen eigenen Puffer */
+        for (int y = 0; y < h; y++)
+            memcpy(&sCap[y * w], &px[y * pitch], (size_t)w * 4);
+        sCapW = w;
+        sCapH = h;
+        return;
+    }
     for (int y = 0; y < h; y++)
         memcpy(&sFrame[y * w], &px[y * pitch], (size_t)w * 4);
     sW = w;
@@ -370,7 +383,183 @@ EXPORT int tmc_debug(int what) {
             return (int)ITEM_MAP;
         case 7:
             return (int)GetInventoryValue(ITEM_MAP);
+        case 8:
+            return gMain.task * 10000 + gMain.state * 100 + gMain.substate;
         default:
             return -2;
     }
+}
+
+
+/* ---------------------------------------------------------------------------------------------------------------
+ * Karte (Zelda Core): Kamera/Raum, Bild ohne Figuren, Fundorte aus der Randomizer-Logik von Picori
+ * ------------------------------------------------------------------------------------------------------------- */
+#include "area.h"
+#include "room.h"
+#include "player.h"
+#include "flags.h"
+#include "rando/rando_logic.h"
+#include "rando/rando_runtime.h"
+#include "rando/rando_keymap.h"
+#include "item_ids.h"
+
+extern void Port_PPU_PresentFrame(void);
+extern void Port_PPU_SetPresentIsFirstOfTick(bool first);
+extern void port_hdma_vblank_reset(void);
+extern u32 CheckLocalFlagByBank(u32 offset, u32 flag);
+extern u32 GetFlagBankOffset(u32 idx);
+
+/* Ansicht: [0] Gebiet, [1] Raum, [2] Oberwelt (1/0), [3] Raum-Ursprung x, [4] y, [5] Kamera x, [6] y,
+ * [7] Raumbreite, [8] Raumhöhe, [9] Link x, [10] Link y, [11] Bildbreite. 0 = nicht im Spiel */
+EXPORT int tmc_view(int* out) {
+    if (gMain.task != 2 || gMain.substate == GAMEMAIN_SUBTASK)
+        return 0;
+    out[0] = gRoomControls.area;
+    out[1] = gRoomControls.room;
+    out[2] = AreaIsOverworld() ? 1 : 0;
+    out[3] = gRoomControls.origin_x;
+    out[4] = gRoomControls.origin_y;
+    out[5] = gRoomControls.scroll_x;
+    out[6] = gRoomControls.scroll_y;
+    out[7] = gRoomControls.width;
+    out[8] = gRoomControls.height;
+    out[9] = gPlayerEntity.base.x.HALF.HI;
+    out[10] = gPlayerEntity.base.y.HALF.HI;
+    out[11] = sW;
+    return 1;
+}
+
+/* das zuletzt gezeigte Spielbild noch einmal zeichnen – ohne Figuren (nur Hintergründe). Das Spiel läuft dabei
+ * nicht weiter. Liefert RGBA (Breite × 160). */
+EXPORT const uint32_t* tmc_render_bg(int* w, int* h) {
+    if (sState != 1)
+        return NULL;
+    const int layers = gTmcCoreLayers;
+    sCapture = 1;
+    gTmcCoreNoObj = 1;
+    gTmcCoreLayers = 0x0E; /* ohne BG0 (Anzeige, Texte); Hintergrundfarbe wird Magenta = nicht übernehmen */
+    Port_PPU_SetPresentIsFirstOfTick(false);
+    Port_PPU_PresentFrame();
+    port_hdma_vblank_reset();
+    gTmcCoreLayers = layers;
+    gTmcCoreNoObj = 0;
+    sCapture = 0;
+    *w = sCapW;
+    *h = sCapH;
+    return sCap;
+}
+
+/* Raumkopf: Weltposition und Größe eines Raums (für Fundorte auf der Karte) */
+EXPORT int tmc_room_rect(int area, int room, int* out) {
+    if (area < 0 || area >= 0x90 || room < 0 || room >= 0x40)
+        return 0;
+    RoomHeader* t = gAreaRoomHeaders[area];
+    if (t == NULL)
+        return 0;
+    RoomHeader* r = t + room;
+    if (r->map_x == 0xFFFF || r->pixel_width == 0 || r->pixel_width > 0x1000)
+        return 0;
+    out[0] = r->map_x;
+    out[1] = r->map_y;
+    out[2] = r->pixel_width;
+    out[3] = r->pixel_height;
+    return 1;
+}
+
+/* Fundorte: Logik von Picori laden (Text der Datei default.logic) */
+EXPORT int tmc_loc_load(const char* text, int len) {
+    if (RandoLogic_IsLoaded())
+        return 1;
+    if (!RandoLogic_LoadText(text, (size_t)len))
+        return 0;
+    Rando_Keymap_Apply(); /* Adressen der Logik-Datei auf Gebiet/Raum/Flag abbilden */
+    return 1;
+}
+
+EXPORT int tmc_loc_count(void) {
+    return RandoLogic_IsLoaded() ? (int)RandoLogic_GetLocationCountRaw() : 0;
+}
+
+/* Fundort i: Name nach `name`, Schlüssel (Gebiet << 16 | Raum << 8 | Truhe/Flag, oder Sonderfall), Art */
+EXPORT int tmc_loc_info(int i, char* name, int cap, unsigned* key, int* type) {
+    const char* n = RandoLogic_GetLocationName((uint32_t)i);
+    if (n == NULL)
+        return 0;
+    snprintf(name, (size_t)cap, "%s", n);
+    *key = RandoLogic_GetLocationKeyAt((uint32_t)i);
+    *type = (int)RandoLogic_GetLocationType((uint32_t)i);
+    return 1;
+}
+
+/* schon eingesammelt? (wie der Tracker von Picori) */
+EXPORT int tmc_loc_done(unsigned key) {
+    if (key == 0xFFFFFFFFu)
+        return 0;
+    if (key & 0x80000000u) {
+        uint32_t group = (key >> 24) & 0x7F;
+        uint32_t subkey = (key >> 16) & 0xFF;
+        if (group == RANDO_SCRIPTED_KEY_SPECIAL) {
+            switch (subkey) {
+                case RANDO_SPECIAL_KEY_BELL_HP:
+                    return CheckLocalFlagByBank(GetFlagBankOffset(2), 0xd0) != 0;
+                case RANDO_SPECIAL_KEY_TINGLE_TROPHY:
+                    return GetInventoryValue(ITEM_QST_TINGLE_TROPHY) != 0;
+                case RANDO_SPECIAL_KEY_FORTRESS_PRIZE:
+                    return GetInventoryValue(ITEM_OCARINA) != 0;
+            }
+        }
+        return -1; /* unbekannt */
+    }
+    uint32_t area = (key >> 16) & 0xFF;
+    uint32_t room = (key >> 8) & 0xFF;
+    uint32_t fc = key & 0xFF;
+    unsigned flag = Rando_GetChestLocalFlag(area, room, fc);
+    unsigned offset = GetFlagBankOffset(area);
+    return CheckLocalFlagByBank(offset, flag != 0xFF ? flag : fc) != 0;
+}
+
+/* Gebiet: Bits 0 Oberwelt, 1 Dungeon (aus den Gebietsdaten des Spiels) */
+extern bool32 CheckAreaOverworld(u32 area);
+EXPORT int tmc_area_kind(int area) {
+    if (area < 0 || area >= 0x90)
+        return 0;
+    return (CheckAreaOverworld((u32)area) ? 1 : 0) | ((gAreaMetadata[area].flags & AR_IS_DUNGEON) ? 2 : 0);
+}
+
+#include "sound.h"
+
+/* eigene Karte statt der Kartenseite des Pausenmenüs (Patch in pauseMenu.c) */
+int gTmcCoreOwnMap = 0, gTmcCoreMapReq = 0;
+extern u8 gUnk_08128C00[];
+extern s32 sub_080A50A0(s32 param_1);
+
+EXPORT void tmc_set_own_map(int on) {
+    gTmcCoreOwnMap = on;
+}
+
+/* 1 = im Pausenmenü wurde zur Kartenseite geblättert (einmalig), 2 = die Kartenseite des Spiels ist offen */
+EXPORT int tmc_map_request(void) {
+    if (gTmcCoreMapReq) {
+        gTmcCoreMapReq = 0;
+        return 1;
+    }
+    if (gMain.substate == GAMEMAIN_SUBTASK && gUI.lastState == 1 && gPauseMenuOptions.screen >= 4 &&
+        gPauseMenuOptions.screen <= 6)
+        return 2;
+    return 0;
+}
+
+/* Pausenmenü von der (eigenen) Karte aus weiterblättern: 1 = L, 2 = R, 0 = Menü schließen */
+EXPORT int tmc_menu_goto(int which) {
+    if (!(gMain.substate == GAMEMAIN_SUBTASK && gUI.lastState == 1))
+        return 0;
+    s32 s = which == 0 ? 0xe : sub_080A50A0(gUnk_08128C00[which & 3]);
+    if (which != 0 && s >= 4 && s <= 6)
+        return 0;
+    if (s != gPauseMenuOptions.screen) {
+        gPauseMenuOptions.screen2 = s;
+        gMenu.field_0xc = NULL;
+    }
+    SoundReq(SFX_TEXTBOX_OPEN);
+    return 1;
 }
