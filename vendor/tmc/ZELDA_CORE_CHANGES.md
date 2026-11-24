@@ -17,8 +17,8 @@ unverändert.
 - `port/port_rom.c`: Keine einzelnen ROM-Seiten unter `rom_data/` lesen oder schreiben (die ganze ROM liegt im
   Speicher). Das spart bei jedem Start mehrere Sekunden.
 - `port/port_exe_path.cpp`: Entpackte Grafiken und Töne liegen im Arbeitsordner (`minish` neben `zelda-core.exe`).
-- `src/menu/pauseMenu.c`: Blättert man im Pausenmenü zur Kartenseite, meldet das Spiel das an Zelda Core und
-  bleibt auf der aktuellen Seite; Zelda Core zeigt dann seine eigene Karte (abschaltbar).
+- `src/menu/pauseMenu.c`: Mit der eigenen Karte von Zelda Core entfällt die Kartenseite des Pausenmenüs; L/R wechselt
+  dann zwischen Items und Quest-Status (abschaltbar).
 - `port/port_ppu.cpp` (Karte): Das letzte Bild lässt sich ohne Figuren und Anzeige noch einmal zeichnen.
 - `port/port_quicksave.c`: Funktionen für Savestates im Speicher (in Zelda Core derzeit nicht benutzt; Savestates
   sichern dort alle Spielvariablen über die Abschnitte `.tmcd`/`.tmcb`).

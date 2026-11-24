@@ -438,9 +438,14 @@ EXPORT const uint32_t* tmc_render_bg(int* w, int* h) {
     sCapture = 1;
     gTmcCoreNoObj = 1;
     gTmcCoreLayers = 0x0E; /* ohne BG0 (Anzeige, Texte); Hintergrundfarbe wird Magenta = nicht übernehmen */
+    /* Aufhellen/Abdunkeln (Überblendungen, Intro) nicht mit aufnehmen; Transparenz bleibt */
+    const u8 bld = gIoMem[0x50];
+    if (((bld >> 6) & 3) >= 2)
+        gIoMem[0x50] = (u8)(bld & 0x3F);
     Port_PPU_SetPresentIsFirstOfTick(false);
     Port_PPU_PresentFrame();
     port_hdma_vblank_reset();
+    gIoMem[0x50] = bld;
     gTmcCoreLayers = layers;
     gTmcCoreNoObj = 0;
     sCapture = 0;
@@ -562,4 +567,143 @@ EXPORT int tmc_menu_goto(int which) {
     }
     SoundReq(SFX_TEXTBOX_OPEN);
     return 1;
+}
+
+/* ---------------------------------------------------------------------------------------------------------------
+ * Ganze Karte vorab (Zelda Core): jeden Raum einmal besuchen und abfotografieren. Zelda Core sichert vorher einen
+ * Savestate und lädt ihn danach wieder – am Spiel ändert sich nichts.
+ * ------------------------------------------------------------------------------------------------------------- */
+#include "fade.h"
+#include "transitions.h"
+
+static int sGenHold, sGenX, sGenY;
+extern u8 gUpdateVisibleTiles;
+extern void UpdateScrollVram(void);
+
+/* Raum-Kopf i eines Gebiets, solange es Räume gibt (Ende = 0xFFFF) */
+EXPORT int tmc_room_count(int area) {
+    if (area < 0 || area >= 0x90 || gAreaRoomHeaders[area] == NULL)
+        return 0;
+    int n = 0;
+    while (n < 0x40 && gAreaRoomHeaders[area][n].map_x != 0xFFFF)
+        n++;
+    return n;
+}
+
+/* in einen Raum springen (Position im Raum) */
+EXPORT int tmc_warp(int area, int room, int x, int y) {
+    if (gMain.task != 2 || gMain.substate != GAMEMAIN_UPDATE)
+        return 0;
+    /* nur während des Erstellens (der Spielstand wird danach zurückgeladen): Intro vorbei, damit Räume wie die
+     * Stadt in ihrer normalen Form laden und nicht als Fest-Fassung */
+    if (gSave.global_progress < 2)
+        gSave.global_progress = 2;
+    SetGlobalFlag(TABIDACHI);
+    Transition t;
+    memset(&t, 0, sizeof(t));
+    t.warp_type = WARP_TYPE_AREA;
+    t.endX = (u16)x;
+    t.endY = (u16)y;
+    t.area = (u8)area;
+    t.room = (u8)room;
+    t.layer = 1;
+    gRoomTransition.stairs_idx = 0;
+    DoExitTransition(&t);
+    sGenHold = 0;
+    return 1;
+}
+
+/* Raum fertig geladen und sichtbar? Gebiet << 8 | Raum, sonst -1. Hält Link dabei am Leben. */
+EXPORT int tmc_gen_ready(void) {
+    if (gSave.stats.maxHealth)
+        gSave.stats.health = gSave.stats.maxHealth;
+    if (sGenHold) {
+        gRoomControls.camera_target = NULL;
+        gRoomControls.scroll_x = (s16)sGenX;
+        gRoomControls.scroll_y = (s16)sGenY;
+    }
+    if (gMain.task != 2 || gMain.substate != GAMEMAIN_UPDATE || gFadeControl.active || gRoomTransition.transitioningOut)
+        return -1;
+    return (gRoomControls.area << 8) | gRoomControls.room;
+}
+
+/* Kamera fest auf (x, y) (Weltpixel, linke obere Ecke); -1 = wieder Link folgen */
+EXPORT void tmc_cam(int x, int y) {
+    if (x < 0) {
+        sGenHold = 0;
+        gRoomControls.camera_target = &gPlayerEntity.base;
+        return;
+    }
+    sGenHold = 1;
+    sGenX = x;
+    sGenY = y;
+    gRoomControls.camera_target = NULL;
+    gRoomControls.scroll_x = (s16)x;
+    gRoomControls.scroll_y = (s16)y;
+    /* sichtbare Kacheln komplett neu (wie beim Betreten eines Raums) */
+    gUpdateVisibleTiles = 1;
+    UpdateScrollVram();
+    gUpdateVisibleTiles = 1;
+}
+
+/* Fortschritt für die Quest-Seite der Karte (Reihenfolge siehe mapui.rs: QUEST_VALUES) */
+EXPORT int tmc_progress(int* out, int cap) {
+    if (gMain.task != 2)
+        return 0;
+    int v[40];
+    int n = 0;
+#define HAS(i) (GetInventoryValue(i) != 0)
+    v[n++] = HAS(ITEM_EARTH_ELEMENT);
+    v[n++] = HAS(ITEM_FIRE_ELEMENT);
+    v[n++] = HAS(ITEM_OCARINA);
+    v[n++] = HAS(ITEM_WATER_ELEMENT);
+    v[n++] = HAS(ITEM_WIND_ELEMENT);
+    v[n++] = HAS(ITEM_FOURSWORD);
+    v[n++] = HAS(ITEM_BOTTLE1) + HAS(ITEM_BOTTLE2) + HAS(ITEM_BOTTLE3) + HAS(ITEM_BOTTLE4);
+    {
+        int f = 0;
+        for (int i = 0; i < 36; i++)
+            for (int b = 0; b < 8; b++)
+                f += (gSave.figurines[i] >> b) & 1;
+        v[n++] = f;
+    }
+    v[n++] = gSave.kinstones.fusedCount;
+    v[n++] = HAS(ITEM_SKILL_SPIN_ATTACK) + HAS(ITEM_SKILL_ROLL_ATTACK) + HAS(ITEM_SKILL_DASH_ATTACK) +
+             HAS(ITEM_SKILL_ROCK_BREAKER) + HAS(ITEM_SKILL_SWORD_BEAM) + HAS(ITEM_SKILL_GREAT_SPIN) +
+             HAS(ITEM_SKILL_DOWN_THRUST) + HAS(ITEM_SKILL_PERIL_BEAM);
+    v[n++] = gSave.stats.maxHealth / 8;
+    v[n++] = gSave.stats.walletType;
+    v[n++] = gSave.stats.bombBagType;
+    v[n++] = gSave.stats.quiverType;
+    v[n++] = HAS(ITEM_KINSTONE_BAG);
+    v[n++] = HAS(ITEM_GRIP_RING);
+    v[n++] = HAS(ITEM_POWER_BRACELETS);
+    v[n++] = HAS(ITEM_FLIPPERS);
+    v[n++] = HAS(ITEM_QST_BOOK1) + HAS(ITEM_QST_BOOK2) + HAS(ITEM_QST_BOOK3);
+    v[n++] = HAS(ITEM_QST_TINGLE_TROPHY);
+    v[n++] = HAS(ITEM_QST_CARLOV_MEDAL);
+    v[n++] = HAS(ITEM_QST_LONLON_KEY);
+    v[n++] = HAS(ITEM_QST_GRAVEYARD_KEY);
+    v[n++] = HAS(ITEM_LIGHT_ARROW);
+    v[n++] = HAS(ITEM_MIRROR_SHIELD);
+    v[n++] = HAS(ITEM_MAGIC_BOOMERANG);
+#undef HAS
+    if (n > cap)
+        n = cap;
+    memcpy(out, v, (size_t)n * sizeof(int));
+    return n;
+}
+
+/* Gebietsnamen (Warp-Menü von Picori, englisch) und ob ein Sprung dorthin sicher ist */
+extern const char* Port_DebugQuery_AreaName(unsigned char area);
+extern int Port_DebugAction_AreaIsWarpable(unsigned char area);
+
+EXPORT int tmc_area_name(int area, char* out, int cap) {
+    if (area < 0 || area > 0xFF)
+        return 0;
+    const char* n = Port_DebugQuery_AreaName((unsigned char)area);
+    if (n == NULL)
+        return 0;
+    snprintf(out, (size_t)cap, "%s", n);
+    return Port_DebugAction_AreaIsWarpable((unsigned char)area) ? 1 : 2;
 }

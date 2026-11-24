@@ -17,6 +17,10 @@ type FSave = unsafe extern "C" fn(*const i8, i32);
 type FInt = unsafe extern "C" fn(i32);
 type FIntR = unsafe extern "C" fn(i32) -> i32;
 type FXY = unsafe extern "C" fn(*mut i32, *mut i32) -> i32;
+type FWarp = unsafe extern "C" fn(i32, i32, i32, i32) -> i32;
+type FXYv = unsafe extern "C" fn(i32, i32);
+type FProg = unsafe extern "C" fn(*mut i32, i32) -> i32;
+type FName = unsafe extern "C" fn(i32, *mut u8, i32) -> i32;
 type FPtrI = unsafe extern "C" fn(*mut i32) -> i32;
 type FRoom = unsafe extern "C" fn(i32, i32, *mut i32) -> i32;
 type FLocLoad = unsafe extern "C" fn(*const u8, i32) -> i32;
@@ -60,6 +64,12 @@ struct Api {
     own_map: FInt,
     map_request: FVoidI,
     menu_goto: FIntR,
+    room_count: FIntR,
+    warp: FWarp,
+    gen_ready: FVoidI,
+    cam: FXYv,
+    progress: FProg,
+    area_name: FName,
 }
 
 /// geladene DLL, ROM des laufenden Picori, Anfangszustand
@@ -137,6 +147,12 @@ fn load_api() -> Result<&'static Api, String> {
             own_map: f!("tmc_set_own_map"),
             map_request: f!("tmc_map_request"),
             menu_goto: f!("tmc_menu_goto"),
+            room_count: f!("tmc_room_count"),
+            warp: f!("tmc_warp"),
+            gen_ready: f!("tmc_gen_ready"),
+            cam: f!("tmc_cam"),
+            progress: f!("tmc_progress"),
+            area_name: f!("tmc_area_name"),
         };
         Ok(Box::leak(Box::new(api)))
     }
@@ -430,6 +446,51 @@ impl Core {
     /// Pausenmenü von der eigenen Karte aus: 1 = L-Seite, 2 = R-Seite, 0 = schließen
     pub fn menu_goto(&self, which: i32) -> bool {
         self.ready && unsafe { (self.api.menu_goto)(which) } != 0
+    }
+
+    /// ganze Karte: Räume je Gebiet, Sprung in einen Raum, „Raum fertig“, Kamera festhalten (x < 0 = Link folgen)
+    pub fn room_count(&self, area: u8) -> i32 {
+        if !self.ready {
+            return 0;
+        }
+        unsafe { (self.api.room_count)(area as i32) }
+    }
+    pub fn warp(&self, area: u8, room: u8, x: i32, y: i32) -> bool {
+        self.ready && unsafe { (self.api.warp)(area as i32, room as i32, x, y) } != 0
+    }
+    pub fn gen_ready(&self) -> i32 {
+        if !self.ready {
+            return -1;
+        }
+        unsafe { (self.api.gen_ready)() }
+    }
+    /// Werte für die Quest-Seite (siehe tmc_progress)
+    pub fn progress(&self) -> Vec<i32> {
+        if !self.ready {
+            return Vec::new();
+        }
+        let mut v = vec![0i32; 40];
+        let n = unsafe { (self.api.progress)(v.as_mut_ptr(), 40) }.max(0) as usize;
+        v.truncate(n);
+        v
+    }
+    /// Name eines Gebiets und ob ein Sprung dorthin sicher ist
+    pub fn area_name(&self, area: u8) -> Option<(String, bool)> {
+        if !self.ready {
+            return None;
+        }
+        let mut buf = vec![0u8; 96];
+        let r = unsafe { (self.api.area_name)(area as i32, buf.as_mut_ptr(), buf.len() as i32) };
+        if r == 0 {
+            return None;
+        }
+        let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        Some((String::from_utf8_lossy(&buf[..end]).into_owned(), r == 1))
+    }
+    pub fn cam(&self, x: i32, y: i32) {
+        if self.ready {
+            unsafe { (self.api.cam)(x, y) };
+        }
     }
 
     /// Entwicklung: Werte aus dem Spiel (siehe tmc_debug)

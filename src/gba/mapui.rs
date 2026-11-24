@@ -5,7 +5,7 @@
 //! Öffnet mit Minus (Karte-Taste) oder wenn man im Item-Menü zur Kartenseite blättert – die Karte des Spiels
 //! wird dann nicht mehr gezeigt. Im Item-Menü führen L/R am Rand zurück zu den Seiten des Spiels.
 
-use super::tmcmap::{pretty, Loc, LocKind, MapData, Space, CH, LOGIC};
+use super::tmcmap::{pretty, Loc, LocKind, MapData, MapGen, Space, CH, LOGIC};
 use crate::app::App;
 use crate::gfx::{self, Color32, Stroke};
 use crate::i18n::tr;
@@ -33,8 +33,38 @@ const X: u16 = 1 << 6;
 const L: u16 = 1 << 5;
 const R: u16 = 1 << 4;
 
-/// Reiter: 0 Oberwelt, 1 Gebiet (Häuser, Höhlen, Dungeons), 2 100 %, 3 Fundorte
-const TABS: u8 = 4;
+/// Reiter: 0 Oberwelt, 1 Dungeons/Räume, 2 100 %, 3 Quests, 4 Fundorte
+const TABS: u8 = 5;
+
+/// Quest-Seite: (deutsch, englisch, Hauptquest, Wert aus tmc_progress, Ziel)
+const QUESTS: &[(&str, &str, bool, usize, i32)] = &[
+    ("Waldschrein: Erd-Element", "Deepwood Shrine: Earth Element", true, 0, 1),
+    ("Flammenhöhle: Feuer-Element", "Cave of Flames: Fire Element", true, 1, 1),
+    ("Festung der Winde: Okarina", "Fortress of Winds: Ocarina", true, 2, 1),
+    ("Tempel der Tropfen: Wasser-Element", "Temple of Droplets: Water Element", true, 3, 1),
+    ("Palast der Winde: Wind-Element", "Palace of Winds: Wind Element", true, 4, 1),
+    ("Vierschwert", "Four Sword", true, 5, 1),
+    ("Flaschen", "Bottles", false, 6, 4),
+    ("Figuren", "Figurines", false, 7, 136),
+    ("Kinstein-Fusionen", "Kinstone fusions", false, 8, 100),
+    ("Schwerttechniken", "Sword techniques", false, 9, 8),
+    ("Herzen", "Hearts", false, 10, 20),
+    ("Geldbörse", "Wallet", false, 11, 3),
+    ("Bombentasche", "Bomb bag", false, 12, 3),
+    ("Köcher", "Quiver", false, 13, 3),
+    ("Kinstein-Beutel", "Kinstone bag", false, 14, 1),
+    ("Greifring", "Grip ring", false, 15, 1),
+    ("Kraftarmbänder", "Power bracelets", false, 16, 1),
+    ("Schwimmflossen", "Flippers", false, 17, 1),
+    ("Bücher der Bibliothek", "Library books", false, 18, 3),
+    ("Tingles Trophäe", "Tingle trophy", false, 19, 1),
+    ("Carlovs Medaille", "Carlov medal", false, 20, 1),
+    ("Lon-Lon-Schlüssel", "Lon Lon key", false, 21, 1),
+    ("Friedhofsschlüssel", "Graveyard key", false, 22, 1),
+    ("Lichtpfeile", "Light arrows", false, 23, 1),
+    ("Spiegelschild", "Mirror shield", false, 24, 1),
+    ("Magischer Bumerang", "Magic boomerang", false, 25, 1),
+];
 /// alle so viele Spielbilder ein Bild ohne Figuren in die Karte eintragen
 const CAPTURE_EVERY: u64 = 12;
 /// Spalten der Liste „Fundorte“: Arten, dann Items und Gebiete
@@ -73,6 +103,13 @@ pub struct MapUi {
     /// Entwicklung: zuletzt ausgelöste Karte-Taste (PASTLINK_GBA_KEYS „m:bild“), Anzeige-Bilder seit dem Öffnen
     pub dev_m: u32,
     dev_ui: u32,
+    /// ganze Karte wird gerade erstellt (einmalig je ROM)
+    gen: Option<MapGen>,
+    /// Werte für die Quest-Seite, gewählte Quest
+    progress: Vec<i32>,
+    quest_sel: usize,
+    /// Gebietsnamen aus Picori
+    area_names: HashMap<u8, String>,
 }
 
 impl Default for MapUi {
@@ -102,6 +139,10 @@ impl Default for MapUi {
             map_rect: gfx::Rect::NOTHING,
             dev_m: u32::MAX,
             dev_ui: 0,
+            gen: None,
+            progress: Vec::new(),
+            quest_sel: 0,
+            area_names: HashMap::new(),
         }
     }
 }
@@ -169,23 +210,26 @@ impl App {
             }
             // Gebietsnamen: häufigster Namensanfang der Fundorte darin („Deepwood_…“ → Deepwood)
             m.names = by_area.into_iter().filter_map(|(a, c)| c.into_iter().max_by_key(|x| x.1).map(|(n, _)| (a, pretty(&n)))).collect();
+            m.area_names = (0u8..0x90).filter_map(|a| g.area_name(a).map(|n| (a, n.0))).collect();
             d.locs_loaded = true;
             m.data = Some(d);
             m.rom = Some(g.path.clone());
             m.tex.clear();
             m.views.clear();
         }
+        // eigene Karte an: das Item-Menü hat keine Kartenseite mehr (L/R wechselt Items und Quest-Status)
         g.set_own_map(own);
-        // Kartenseite im Item-Menü: eigene Karte statt der des Spiels
-        if own && !m.open {
-            let req = g.map_request();
-            if req != 0 {
-                m.open = true;
-                m.from_menu = true;
-                m.prev_pad = 0xFFFF;
-                m.dev_ui = 0;
-                m.tab = 0;
+        // ganze Karte einmalig erstellen, sobald die Karte offen ist (das Spiel steht dabei; danach genau wie vorher)
+        if m.open && m.gen.is_none() && m.data.as_ref().is_some_and(|d| !d.complete()) {
+            m.gen = MapGen::new(g);
+        }
+        if let (Some(gen), Some(d)) = (m.gen.as_mut(), m.data.as_mut()) {
+            gen.step(g, d, std::time::Duration::from_millis(14));
+            if gen.done {
+                m.gen = None;
+                d.save();
             }
+            return;
         }
         // Link und Ausschnitt
         let view = g.map_view();
@@ -222,6 +266,10 @@ impl App {
             }
             m.owned = g.owned_items();
             m.items = (m.owned.len(), 18);
+            let p = g.progress();
+            if !p.is_empty() {
+                m.progress = p;
+            }
         }
         if m.saved.elapsed().as_secs() > 60 {
             m.saved = Instant::now();
@@ -261,20 +309,15 @@ impl App {
 
     /// schließen; `close_menu` = auch das Item-Menü des Spiels schließen
     fn gba_map_close(&mut self, close_menu: bool) {
+        let _ = close_menu;
         let m = &mut self.gba.map;
+        // Erstellen abgebrochen: Spiel zurück auf den Stand vor dem Erstellen (das Bisherige bleibt)
+        if let (Some(gen), Some(g)) = (m.gen.take(), self.gba.game.as_mut()) {
+            gen.abort(g);
+        }
         m.open = false;
         if let Some(d) = m.data.as_mut() {
             d.save();
-        }
-        if m.from_menu {
-            if let Some(g) = &self.gba.game {
-                if close_menu {
-                    g.menu_goto(0);
-                } else if g.map_request() == 2 {
-                    // das Spiel steht auf seiner Kartenseite: zurück zu den Items
-                    g.menu_goto(2);
-                }
-            }
         }
         m.from_menu = false;
     }
@@ -301,7 +344,7 @@ impl App {
     /// Gebiete mit Bild oder Fundorten (Reiter „Gebiet“), sortiert
     fn gba_map_spaces(&self) -> Vec<Space> {
         let Some(d) = &self.gba.map.data else { return Vec::new() };
-        let mut v: Vec<Space> = d.chunks.keys().map(|k| k.0).chain(d.locs.iter().filter_map(|l| l.at.map(|a| a.0))).filter(|&s| s != 0).collect();
+        let mut v: Vec<Space> = d.chunks.keys().map(|k| k.0).chain(d.locs.iter().filter_map(|l| l.at.map(|a| a.0))).filter(|&s| s != 0 && s != 0xFFFF).collect();
         v.sort();
         v.dedup();
         v
@@ -313,7 +356,7 @@ impl App {
             return tr(en, "Oberwelt", "Overworld").to_string();
         }
         let a = (sp - 1) as u8;
-        self.gba.map.names.get(&a).cloned().unwrap_or_else(|| format!("{} {a:02X}", tr(en, "Gebiet", "Area")))
+        self.gba.map.area_names.get(&a).or_else(|| self.gba.map.names.get(&a)).cloned().unwrap_or_else(|| format!("{} {a:02X}", tr(en, "Gebiet", "Area")))
     }
 
     fn gba_map_rep(&mut self, pad: u16, dt: f32) -> (i32, i32) {
@@ -397,7 +440,7 @@ impl App {
         if pressed & (L | R) != 0 {
             let m = &mut self.gba.map;
             let right = pressed & R != 0;
-            // im Item-Menü: am Rand zurück zu den Seiten des Spiels
+            // (früher: aus dem Item-Menü geöffnet – gibt es nicht mehr, die Karte öffnet nur mit Minus)
             if m.from_menu && ((!right && m.tab == 0) || (right && m.tab == TABS - 1)) {
                 let from_map_page = self.gba.game.as_ref().is_some_and(|g| g.map_request() == 2);
                 m.open = false;
@@ -438,7 +481,7 @@ impl App {
                 self.gba_map_center_link();
             }
             if tab == 1 && pressed & A != 0 {
-                // A: nächstes Gebiet
+                // A: nächster Dungeon/Raum
                 let v = self.gba_map_spaces();
                 if !v.is_empty() {
                     let i = v.iter().position(|&s| s == self.gba.map.space).map_or(0, |i| (i + 1) % v.len());
@@ -479,8 +522,14 @@ impl App {
                 m.list_cat = (m.list_cat as i32 + d.1).rem_euclid(LIST_CATS as i32) as usize;
             }
             if pressed & A != 0 {
-                m.tab = 3;
+                m.tab = 4;
                 m.list_sel = 0;
+            }
+        } else if tab == 3 {
+            let d = self.gba_map_rep(pad, dt);
+            let m = &mut self.gba.map;
+            if d.1 != 0 {
+                m.quest_sel = (m.quest_sel as i32 + d.1).clamp(0, QUESTS.len() as i32 - 1) as usize;
             }
         } else {
             let d = self.gba_map_rep(pad, dt);
@@ -609,7 +658,8 @@ impl App {
         let c = self.gba_map_counts();
         let (a, n) = c.iter().fold((0, 0), |s, x| (s.0 + x.1, s.1 + x.2));
         let (ia, inn) = self.gba.map.items;
-        (a + ia) as f32 / (n + inn).max(1) as f32 * 100.0
+        let (qa, qn) = self.gba_quest_score();
+        (a + ia) as f32 / (n + inn).max(1) as f32 * 85.0 + qa / qn.max(1.0) * 15.0
     }
 
     /// Karte zeichnen (über dem Spielbild)
@@ -634,7 +684,7 @@ impl App {
         self.gba.map.map_rect = map_rect;
         // ---- Reiter wie bei A Link to the Past
         let tab = self.gba.map.tab;
-        let names = [tr(en, "OBERWELT", "OVERWORLD"), tr(en, "GEBIET", "AREA"), "100 %", tr(en, "FUNDORTE", "LOCATIONS")];
+        let names = [tr(en, "OBERWELT", "OVERWORLD"), tr(en, "DUNGEON/RÄUME", "DUNGEONS/ROOMS"), "100 %", "QUESTS", tr(en, "FUNDORTE", "LOCATIONS")];
         let tabs_l = inner.left() + fs * 2.4;
         let tw = (inner.width() - fs * 4.8) / names.len() as f32;
         let mut ts = fs;
@@ -663,9 +713,24 @@ impl App {
         let mp = painter.with_clip_rect(map_rect);
         let (info, info2) = match tab {
             2 => self.gba_draw_percent(&mp, map_rect, fs),
-            3 => self.gba_draw_list(&mp, map_rect, fs),
+            3 => self.gba_draw_quests(&mp, map_rect, fs),
+            4 => self.gba_draw_list(&mp, map_rect, fs),
             _ => self.gba_draw_world(ctx, &mp, map_rect, fs),
         };
+        // ganze Karte wird erstellt: Fortschritt über der Karte
+        if let Some(gen) = &self.gba.map.gen {
+            let pr = gen.progress();
+            let br = gfx::Rect::from_center_size(map_rect.center(), gfx::vec2((fs * 26.0).min(map_rect.width() * 0.9), fs * 4.2));
+            painter.rect_filled(br.expand(gp), 0.0, Color32::BLACK);
+            painter.rect_filled(br, 0.0, Color32::from_rgb(10, 12, 32));
+            painter.rect_stroke(br, 0.0, Stroke::new(gp, GOLD));
+            let t1 = tr(en, "KARTE WIRD ERSTELLT (EINMALIG)", "BUILDING THE MAP (ONCE)");
+            self.mtext(&painter, gfx::pos2(br.center().x, br.top() + fs * 1.1), gfx::Align2::CENTER_CENTER, t1, fs, Color32::WHITE);
+            let bar = gfx::Rect::from_min_size(gfx::pos2(br.left() + fs, br.top() + fs * 2.3), gfx::vec2(br.width() - fs * 2.0, fs * 0.8));
+            painter.rect_filled(bar.expand(gp), 0.0, Color32::BLACK);
+            painter.rect_filled(bar, 0.0, Color32::from_rgb(40, 44, 80));
+            painter.rect_filled(gfx::Rect::from_min_size(bar.min, gfx::vec2(bar.width() * pr, bar.height())), 0.0, GOLD);
+        }
         // ---- Fußzeile: Auswahl links, Fortschritt rechts
         let fy = map_rect.bottom() + fs * 0.6;
         let pct = self.gba_map_percent();
@@ -677,8 +742,10 @@ impl App {
             let info2 = self.fit_text(&painter, &info2, fs * 0.75, maxw);
             self.mtext(&painter, gfx::pos2(inner.left() + fs * 0.4, fy + fs * 1.35), gfx::Align2::LEFT_TOP, &info2, fs * 0.75, Color32::from_gray(185));
         }
-        let view = if self.gba.map.spoiler { tr(en, "ALLES", "ALL") } else { tr(en, "GEHOLT", "COLLECTED") };
-        self.mtext(&painter, gfx::pos2(pr.right(), pr.bottom() + fs * 0.25), gfx::Align2::RIGHT_TOP, &format!("{}: {view}", tr(en, "ANSICHT", "VIEW")), fs * 0.7, Color32::from_gray(200));
+        if tab <= 1 {
+            let view = if self.gba.map.spoiler { tr(en, "ALLES", "ALL") } else { tr(en, "GEHOLT", "COLLECTED") };
+            self.mtext(&painter, gfx::pos2(pr.right(), pr.bottom() + fs * 0.25), gfx::Align2::RIGHT_TOP, &format!("{}: {view}", tr(en, "ANSICHT", "VIEW")), fs * 0.7, Color32::from_gray(200));
+        }
         // ---- Maus: Rad = Zoom, Ziehen = verschieben
         if tab <= 1 {
             let (scroll, pos, drag) = ctx.input(|i| (i.smooth_scroll_delta.y, i.pointer.hover_pos(), if i.pointer.primary_down() { i.pointer.delta() } else { gfx::Vec2::ZERO }));
@@ -827,12 +894,7 @@ impl App {
             None => {
                 let here = d.locs.iter().filter(|l| l.at.is_some_and(|a| a.0 == sp) && l.done.is_some());
                 let (a, n) = here.fold((0, 0), |s, l| (s.0 + (l.done == Some(true)) as usize, s.1 + 1));
-                let hint = if sp == 0 {
-                    tr(en, "STICK BEWEGEN  R-STICK ZOOM  Y LINK  X ANSICHT  B ZURÜCK", "STICK MOVE  R-STICK ZOOM  Y LINK  X VIEW  B BACK")
-                } else {
-                    tr(en, "STICK BEWEGEN  R-STICK ZOOM  A NÄCHSTES GEBIET  Y LINK  X ANSICHT", "STICK MOVE  R-STICK ZOOM  A NEXT AREA  Y LINK  X VIEW")
-                };
-                (format!("{space_name}  {a}/{n}"), hint.to_string())
+                (format!("{space_name}  {a}/{n}"), String::new())
             }
         };
         // ab hier nur noch zeichnen (braucht &self)
@@ -880,6 +942,8 @@ impl App {
             .collect();
         let (ia, inn) = self.gba.map.items;
         rows.push((LIST_ITEMS, Icon::Star, GOLD, "Items".to_string(), ia, inn));
+        let qd = QUESTS.iter().filter(|q| self.gba.map.progress.get(q.3).is_some_and(|&v| v >= q.4)).count();
+        rows.push((usize::MAX, Icon::Quest, Color32::WHITE, "Quests".to_string(), qd, QUESTS.len()));
         let pct = self.gba_map_percent();
         self.mtext(p, r.center_top() + gfx::vec2(0.0, fs * 0.8), gfx::Align2::CENTER_TOP, &format!("{pct:.1} %"), fs * 2.0, if pct >= 99.95 { GREEN } else { GOLD });
         let top = r.top() + fs * 3.6;
@@ -905,10 +969,7 @@ impl App {
             self.mtext(p, gfx::pos2(r.right() - fs * 0.8, y), gfx::Align2::RIGHT_CENTER, &format!("{a}/{n}"), fs * 0.8, if full { GREEN } else { GOLD });
         }
         let total: usize = counts.iter().map(|c| c.2).sum::<usize>();
-        (
-            format!("{} {}", total + inn, tr(en, "Dinge zu finden", "things to find")),
-            tr(en, "STICK KATEGORIE  A LISTE  L/R KARTE  B ZURÜCK", "STICK CATEGORY  A LIST  L/R MAP  B BACK").to_string(),
-        )
+        (format!("{} {}", total + inn, tr(en, "Dinge zu finden", "things to find")), String::new())
     }
 
     /// Reiter Fundorte: links Kategorien, rechts Einträge mit Häkchen
@@ -956,12 +1017,70 @@ impl App {
             let name = self.fit_text(p, &e.name, fs * 0.75, lr.width() - fs * 2.8);
             self.mtext(p, gfx::pos2(lr.left() + fs * 1.3, y), gfx::Align2::LEFT_CENTER, &name, fs * 0.75, if e.done == Some(true) { Color32::from_gray(170) } else { Color32::WHITE });
         }
+        let _ = en;
         let info = entries.get(sel).map(|e| e.name.clone()).unwrap_or_default();
-        let hint = if entries.get(sel).is_some_and(|e| e.at.is_some()) {
-            tr(en, "◀ ▶ KATEGORIE  ▲ ▼ EINTRAG  A AUF KARTE ZEIGEN  B ZURÜCK", "◀ ▶ CATEGORY  ▲ ▼ ENTRY  A SHOW ON MAP  B BACK")
-        } else {
-            tr(en, "◀ ▶ KATEGORIE  ▲ ▼ EINTRAG  B ZURÜCK", "◀ ▶ CATEGORY  ▲ ▼ ENTRY  B BACK")
-        };
-        (info, hint.to_string())
+        (info, String::new())
+    }
+}
+
+impl App {
+    /// Quests: (erreicht als Bruchteile, Anzahl)
+    fn gba_quest_score(&self) -> (f32, f32) {
+        let p = &self.gba.map.progress;
+        let a: f32 = QUESTS.iter().map(|q| (p.get(q.3).copied().unwrap_or(0) as f32 / q.4 as f32).min(1.0)).sum();
+        (a, QUESTS.len() as f32)
+    }
+
+    /// Reiter Quests: Hauptquest und Nebenquests mit Stand
+    fn gba_draw_quests(&mut self, p: &gfx::Painter, r: gfx::Rect, fs: f32) -> (String, String) {
+        let en = self.s.ui_en;
+        let gp = self.game_px;
+        let prog = self.gba.map.progress.clone();
+        let sel = self.gba.map.quest_sel.min(QUESTS.len() - 1);
+        let lh = fs * 1.5;
+        // Zeilen mit Überschriften
+        let mut rows: Vec<Option<usize>> = Vec::new();
+        let mut last_main = None;
+        for (i, q) in QUESTS.iter().enumerate() {
+            if last_main != Some(q.2) {
+                rows.push(None);
+                last_main = Some(q.2);
+            }
+            rows.push(Some(i));
+        }
+        let vis = (((r.height() - fs * 0.6) / lh).floor() as usize).max(1);
+        let sel_row = rows.iter().position(|x| *x == Some(sel)).unwrap_or(0);
+        let first = sel_row.saturating_sub(vis / 2).min(rows.len().saturating_sub(vis));
+        let x0 = r.left() + fs * 0.6;
+        let x1 = r.right() - fs * 0.6;
+        for (k, row) in rows.iter().enumerate().skip(first).take(vis) {
+            let y = r.top() + fs * 0.3 + lh * ((k - first) as f32 + 0.5);
+            match row {
+                None => {
+                    let main = rows.get(k + 1).and_then(|x| *x).is_some_and(|i| QUESTS[i].2);
+                    let t = if main { tr(en, "HAUPTQUEST", "MAIN QUEST") } else { tr(en, "NEBENQUESTS", "SIDE QUESTS") };
+                    self.mtext(p, gfx::pos2(x0, y), gfx::Align2::LEFT_CENTER, t, fs * 0.8, GOLD);
+                    p.rect_filled(gfx::Rect::from_min_size(gfx::pos2(x0 + self.text_w(p, t, fs * 0.8) + fs * 0.6, y), gfx::vec2(x1 - x0 - self.text_w(p, t, fs * 0.8) - fs * 0.6, gp)), 0.0, GOLD);
+                }
+                Some(i) => {
+                    let q = QUESTS[*i];
+                    let v = prog.get(q.3).copied().unwrap_or(0);
+                    let done = v >= q.4;
+                    if *i == sel {
+                        p.rect_stroke(gfx::Rect::from_min_max(gfx::pos2(x0 - fs * 0.3, y - lh * 0.45), gfx::pos2(x1 + fs * 0.3, y + lh * 0.45)), 0.0, Stroke::new(gp, GOLD));
+                    }
+                    paint_icon(p, gfx::pos2(x0 + fs * 0.5, y), fs * 0.42, if q.2 { Icon::Crystal } else { Icon::Quest }, if done { if q.2 { KINSTONE } else { Color32::WHITE } } else { GREYC });
+                    let name = if en { q.1 } else { q.0 };
+                    self.mtext(p, gfx::pos2(x0 + fs * 1.4, y), gfx::Align2::LEFT_CENTER, name, fs * 0.8, if done { Color32::from_gray(170) } else { Color32::WHITE });
+                    if q.4 > 1 {
+                        let txt = format!("{}/{}", v.min(q.4), q.4);
+                        self.mtext(p, gfx::pos2(x1 - fs * 1.4, y), gfx::Align2::RIGHT_CENTER, &txt, fs * 0.8, if done { GREEN } else { GOLD });
+                    }
+                    self.tick(p, gfx::pos2(x1 - fs * 0.5, y), fs * 0.4, done);
+                }
+            }
+        }
+        let (a, n) = self.gba_quest_score();
+        (format!("Quests  {:.0} %", a / n.max(1.0) * 100.0), String::new())
     }
 }

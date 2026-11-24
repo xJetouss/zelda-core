@@ -149,11 +149,14 @@ void PauseMenu_Variant2(void) {
                 break;
         }
 #ifdef TMC_CORE_DLL
-        /* Zelda Core: Kartenseite durch die eigene Karte ersetzen */
+        /* Zelda Core: keine Kartenseite (die eigene Karte öffnet mit Minus) – L/R wechselt zwischen Items und
+         * Quest-Status */
         if (iVar1 >= 0 && gTmcCoreOwnMap) {
             s32 t = gMenu.field_0xc[iVar1];
             if (t == 4 || t == 5 || t == 6 || t == 0xf) {
-                gTmcCoreMapReq = 1;
+                gPauseMenuOptions.screen2 = gPauseMenuOptions.screen == 1 ? 2 : 1;
+                SoundReq(SFX_TEXTBOX_OPEN);
+                gMenu.field_0xc = NULL;
                 iVar1 = -1;
             }
         }

@@ -52,6 +52,8 @@ pub struct GbaView {
     inv_tex_hd: bool,
     /// Kästchen der Item-Leiste als fertige Bilder (Kästchen + Item, durch den Bildfilter des Spiels): normal / gewählt
     tile_tex: HashMap<(u8, bool), gfx::TextureHandle>,
+    /// Anzahl Bomben und Pfeile, mit der die Kästchen gebaut sind (ändert sie sich, werden sie neu gebaut)
+    tile_counts: (u8, u8),
     tile_filter: Option<crate::filters::Filter>,
     /// Lage der Inventar-Grafik im Ausschnitt des B-Felds (wie das Spiel Items auf B/A zeichnet)
     item_off: Option<(isize, isize)>,
@@ -125,6 +127,7 @@ impl Default for GbaView {
             inv_tex: HashMap::new(),
             inv_tex_hd: false,
             tile_tex: HashMap::new(),
+            tile_counts: (0, 0),
             tile_filter: None,
             item_off: None,
             ring_raw: None,
@@ -599,6 +602,12 @@ impl App {
         // Kästchen der Item-Leiste: als Pixelbild wie im Item-Menü (graues Kästchen, gewählt hellblau mit weißer Fläche)
         // mit dem Item darauf – dann durch denselben Bildfilter wie das Spielbild (HD weich, Original scharf)
         let filter = self.s.filter;
+        // Anzahl Bomben/Pfeile (Spielstand ab 0x02002AE8: +4 Bomben, +5 Pfeile)
+        let counts = self.gba.game.as_ref().and_then(|g| g.peek(0x0200_2AEC, 2)).map_or((0, 0), |b| (b[0], b[1]));
+        if counts != self.gba.tile_counts {
+            self.gba.tile_counts = counts;
+            self.gba.tile_filter = None;
+        }
         if self.gba.tile_filter != Some(filter) || (self.gba.inv_tex.is_empty() && !self.gba.icons_inv.is_empty()) {
             self.gba.tile_filter = Some(filter);
             self.gba.tile_tex.clear();
@@ -606,7 +615,12 @@ impl App {
             self.gba.inv_tex_hd = hd;
             for (&i, img) in &self.gba.icons_inv {
                 for sel in [false, true] {
-                    let px = super::bar_tile(img, sel);
+                    let count = match i {
+                        7 | 8 => Some(counts.0),
+                        9 | 10 => Some(counts.1),
+                        _ => None,
+                    };
+                    let px = super::bar_tile_count(img, sel, count);
                     let (mut tmp, mut out) = (Vec::new(), Vec::new());
                     let size = crate::filters::apply(filter, &px, super::TILE_W, super::TILE_H, &mut tmp, &mut out);
                     let t = ctx.load_texture(format!("gba-tile-{i}-{sel}"), gfx::ColorImage { size, pixels: out }, filter.texture_options());

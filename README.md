@@ -1,4 +1,4 @@
-# Zelda Core 0.40 – A Link to the Past & The Minish Cap
+# Zelda Core 0.41 – A Link to the Past & The Minish Cap
 
 Eigener SNES-Emulator in Rust, zugeschnitten auf *The Legend of Zelda: A Link to the Past*.
 **Keine ROM enthalten** – du brauchst eine Kopie deines eigenen Moduls (`.sfc`/`.smc`).
@@ -192,11 +192,12 @@ Schalter: *Bild → Recomp (Picori)* (Standard an; aus = mGBA).
 - Alles wie bei mGBA und bei A Link to the Past: Savestates mit Vorschaubild (`.rs1` …, gepackt, getrennt von den
   mGBA-Ständen `.gs1`), Pause, Einzelbild, ×2/Turbo, Zurückspulen, Cheats (CodeBreaker, `Adresse:Wert`; GameShark
   und Action Replay nur mit mGBA), Y-Taste mit Item-Leiste und alle Upscaler/HD-Filter.
-- **Eigene Karte mit 100 %** (wie bei A Link to the Past): Minus/Karte-Taste oder im Item-Menü zur Kartenseite
-  blättern. Reiter OBERWELT, GEBIET (Häuser, Höhlen, Dungeons), 100 % und FUNDORTE (Herzteile, Truhen, Kinsteine,
-  Graben, Unter Wasser, Rubine, Items, Gebiete) mit „schon geholt“. Das Kartenbild entsteht beim Spielen aus dem,
-  was man gesehen hat (`<rom>.tmcmap` neben der ROM – enthält Spielgrafik, nicht weitergeben). L/R wechselt die
-  Reiter und führt im Item-Menü am Rand zurück zu den Seiten des Spiels. Abschaltbar unter *Spiel*.
+- **Eigene Karte mit 100 %** (wie bei A Link to the Past), nur mit Minus/Karte-Taste. Reiter OBERWELT,
+  DUNGEON/RÄUME, 100 %, QUESTS und FUNDORTE (Herzteile, Truhen, Kinsteine, Graben, Unter Wasser, Rubine, Items,
+  Gebiete) mit „schon geholt“. Die Karte ist von Anfang an vollständig: Beim ersten Öffnen besucht Zelda Core
+  einmalig jeden Raum und fotografiert ihn (etwa eine Minute, danach ist der Spielstand genau wie vorher). Gespeichert
+  wird sie als `<rom>.tmcmap` neben der ROM – enthält Spielgrafik, nicht weitergeben. Das Item-Menü hat dann keine
+  Kartenseite mehr, L/R wechselt zwischen Items und Quest-Status. Abschaltbar unter *Spiel*.
 - Der Spielstand des Spiels ist dieselbe `.sav` wie bei mGBA (gleiches Format). Sie wird nur geschrieben, wenn
   „Spielinterne Spielstände speichern“ an ist, sonst speichert man nur über Savestates.
 - Beim **ersten Start** entpackt Picori Grafiken und Töne aus deiner ROM in den Ordner `minish` neben der .exe

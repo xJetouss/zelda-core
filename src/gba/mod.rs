@@ -788,6 +788,26 @@ mod running {
         pub fn map_request(&self) -> i32 {
             self.rc.as_ref().map_or(0, |c| c.map_request())
         }
+        pub fn room_count(&self, area: u8) -> i32 {
+            self.rc.as_ref().map_or(0, |c| c.room_count(area))
+        }
+        pub fn warp(&self, area: u8, room: u8, x: i32, y: i32) -> bool {
+            self.rc.as_ref().is_some_and(|c| c.warp(area, room, x, y))
+        }
+        pub fn area_name(&self, area: u8) -> Option<(String, bool)> {
+            self.rc.as_ref().and_then(|c| c.area_name(area))
+        }
+        pub fn progress(&self) -> Vec<i32> {
+            self.rc.as_ref().map_or(Vec::new(), |c| c.progress())
+        }
+        pub fn gen_ready(&self) -> i32 {
+            self.rc.as_ref().map_or(-1, |c| c.gen_ready())
+        }
+        pub fn cam(&self, x: i32, y: i32) {
+            if let Some(c) = &self.rc {
+                c.cam(x, y);
+            }
+        }
         pub fn menu_goto(&self, which: i32) -> bool {
             self.rc.as_ref().is_some_and(|c| c.menu_goto(which))
         }
@@ -1011,6 +1031,59 @@ impl Gba {
 
 /// Kästchen der Item-Leiste als Pixelbild: wie im Item-Menü (Rand, graue Fläche; gewählt hellblau mit derselben
 /// weißen Fläche wie beim ausgerüsteten B-Item), darauf die Item-Grafik
+/// Ziffern 3×5 für die Anzahl auf den Kästchen der Item-Leiste (Bit 2 = linke Spalte)
+const DIGITS: [[u8; 5]; 10] = [
+    [7, 5, 5, 5, 7],
+    [2, 6, 2, 2, 7],
+    [7, 1, 7, 4, 7],
+    [7, 1, 7, 1, 7],
+    [5, 5, 7, 1, 1],
+    [7, 4, 7, 1, 7],
+    [7, 4, 7, 5, 7],
+    [7, 1, 1, 1, 1],
+    [7, 5, 7, 5, 7],
+    [7, 5, 7, 1, 7],
+];
+
+/// Kästchen der Item-Leiste mit Anzahl (Bomben, Pfeile) unten rechts – weiß mit schwarzem Rand wie im Spiel
+pub fn bar_tile_count(item: &[u8], sel: bool, count: Option<u8>) -> Vec<crate::gfx::Color32> {
+    use crate::gfx::Color32;
+    let mut px = bar_tile(item, sel);
+    let Some(n) = count else { return px };
+    let txt = format!("{:02}", n.min(99));
+    // zwei Ziffern (je 3 breit, 1 Abstand) mit Rand: Fläche 9×7, rechts unten innerhalb des Rahmens
+    let (x0, y0) = (TILE_W as isize - 2 - 9, TILE_H as isize - 2 - 7);
+    let on = |x: isize, y: isize| -> bool {
+        let (lx, ly) = (x - 1, y - 1);
+        if !(0..5).contains(&ly) || lx < 0 {
+            return false;
+        }
+        let d = (lx / 4) as usize;
+        let cx = lx % 4;
+        if d >= 2 || cx == 3 {
+            return false;
+        }
+        let g = txt.as_bytes()[d] - b'0';
+        DIGITS[g as usize][ly as usize] & (4 >> cx) != 0
+    };
+    for y in 0..7isize {
+        for x in 0..9isize {
+            let (tx, ty) = ((x0 + x) as usize, (y0 + y) as usize);
+            let c = if on(x, y) {
+                Some(Color32::from_rgb(248, 248, 248))
+            } else if (-1..=1).any(|dy| (-1..=1).any(|dx| on(x + dx, y + dy))) {
+                Some(Color32::from_rgb(8, 8, 8))
+            } else {
+                None
+            };
+            if let Some(c) = c {
+                px[ty * TILE_W + tx] = c;
+            }
+        }
+    }
+    px
+}
+
 pub fn bar_tile(item: &[u8], sel: bool) -> Vec<crate::gfx::Color32> {
     use crate::gfx::Color32;
     let (w, h) = (TILE_W, TILE_H);
@@ -1181,10 +1254,6 @@ pub fn crop_inv_icon(px: &[u8], w: usize, h: usize, cx: usize, cy: usize, under_
         for x in 0..S {
             let (fx, fy) = ((cx + x) as isize - 9, (cy + y) as isize - 16);
             if fx < 0 || fy < 0 || fx as usize >= w || fy as usize >= h {
-                continue;
-            }
-            // Zahlen (Bomben, Pfeile) stehen unten rechts neben dem Item
-            if x >= S - 3 && y >= 11 {
                 continue;
             }
             let i = (fy as usize * w + fx as usize) * 4;
@@ -1751,9 +1820,37 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
         for _ in 0..20 {
             g.run_frame(0);
         }
+        if std::env::var_os("GBA_ALLITEMS").is_some() {
+            // aus dem Intro heraus: aufs Feld springen (Intro gilt dann als vorbei)
+            for _ in 0..400 {
+                if g.warp(0x00, 0x00, 500, 500) {
+                    break;
+                }
+                g.run_frame(0x0080);
+                g.run_frame(0);
+            }
+            for _ in 0..300 {
+                g.run_frame(0);
+            }
+            g.run_once("22002B32 5554
+22002B34 5555
+22002B36 5554
+22002B38 5500
+22002B3C 5555
+32002AEC 0017
+32002AED 0021");
+            for _ in 0..30 {
+                g.run_frame(0);
+            }
+        }
         // Item-Menü öffnen, alle Items als Figuren aufnehmen
         for f in 0..90 {
             g.run_frame(if f < 3 { 0x1000 } else { 0 });
+        }
+        if g.menu_item().is_none() {
+            let c: Vec<crate::gfx::Color32> = g.frame.chunks_exact(4).map(|c| crate::gfx::Color32::from_rgb(c[0], c[1], c[2])).collect();
+            crate::devtest::bmp(&format!("{out}/items_fail.bmp"), g.w, g.h, &c);
+            println!("Ansicht {:?} Task {}", g.map_view(), g.rc_debug(8));
         }
         let cursor = g.menu_item().expect("Item-Menü nicht offen");
         let (spr, w, h) = g.capture_sprites().unwrap();
@@ -1806,7 +1903,7 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
             let to_c = |im: &[u8], o: usize| if im[o + 3] == 0 { crate::gfx::Color32::from_rgb(255, 0, 255) } else { crate::gfx::Color32::from_rgb(im[o], im[o + 1], im[o + 2]) };
             let mut derived = item_from_b(&truth, &ring, off_all.unwrap_or((1, 4)));
             clean_counted(&mut derived, i);
-            let tile = bar_tile(if inv.contains_key(&i) { item } else { &derived }, false);
+            let tile = bar_tile_count(if inv.contains_key(&i) { item } else { &derived }, false, match i { 7 | 8 => Some(23), 9 | 10 => Some(7), _ => None });
             let mut col = Vec::new();
             for y in 0..ICON_H {
                 for x in 0..ICON_W {
@@ -1833,6 +1930,85 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
             }
         }
         crate::devtest::bmp(&format!("{out}/rc_items_check.bmp"), ICON_W * cols.len().max(1), hh, &px);
+    }
+
+    /// Picori: ganze Karte vorab erstellen (alle Räume), Dauer messen, Übersichtsbilder je Raum speichern
+    #[test]
+    #[ignore]
+    fn dev_rc_mapgen() {
+        let (Ok(p), Ok(st)) = (std::env::var("PASTLINK_GBA_ROM"), std::env::var("GBA_RC_STATE")) else { return };
+        let out = std::env::var("PASTLINK_OUT").unwrap_or_else(|_| ".".into());
+        let mut g = Gba::load_with(Path::new(&p), true, false).unwrap();
+        while g.loading() {
+            g.run_frame(0);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let raw = std::fs::read(&st).ok().and_then(|d| lz4_flex::decompress_size_prepended(&d).ok()).unwrap_or_default();
+        if !g.load_state(&raw) {
+            let mut f = 0u32;
+            let mut in_files = 0u32;
+            while !(g.hud_visible() && f > 500) && f < 20000 {
+                let task = g.rc_debug(8) / 10000;
+                in_files = if task == 1 { in_files + 1 } else { 0 };
+                let k = match task {
+                    0 => if f % 60 < 3 { 0x1000 } else { 0 },
+                    1 if in_files < 60 => 0,
+                    1 if in_files < 200 => if in_files % 40 < 3 { 0x0800 } else { 0 },
+                    _ => if f % 40 < 3 { 0x0080 } else if f % 40 > 20 && f % 40 < 23 { 0x1000 } else { 0 },
+                };
+                g.run_frame(k);
+                f += 1;
+            }
+            for _ in 0..200 {
+                g.run_frame(0);
+            }
+            std::fs::write(&st, lz4_flex::compress_prepend_size(&g.save_state().unwrap())).unwrap();
+        }
+        if std::env::var_os("GBA_WIDE").is_some() {
+            g.set_view(16, 9, true);
+        }
+        let mut d = super::tmcmap::MapData::default();
+        let t0 = std::time::Instant::now();
+        let mut gen = super::tmcmap::MapGen::new(&mut g).expect("nicht im Spiel");
+        let mut last = 0.0;
+        while !gen.done {
+            gen.step(&mut g, &mut d, std::time::Duration::from_millis(500));
+            if gen.progress() - last > 0.1 {
+                last = gen.progress();
+                println!("{:.0} % nach {:.0} s", last * 100.0, t0.elapsed().as_secs_f32());
+            }
+        }
+        println!("fertig in {:.0} s, ausgelassen {}: {:02X?}", t0.elapsed().as_secs_f32(), gen.skipped.len(), &gen.skipped[..gen.skipped.len().min(40)]);
+        println!("nach dem Laden wieder: {:?}", g.map_view());
+        let mut spaces: Vec<u16> = d.chunks.keys().map(|k| k.0).filter(|&s| s != 0xFFFF).collect();
+        spaces.sort();
+        spaces.dedup();
+        println!("Räume auf der Karte: {}", spaces.len());
+        for area in 0u8..0x90 {
+            if g.area_kind(area) & 1 != 0 {
+                let rr: Vec<String> = (0..g.room_count(area) as u8).filter_map(|r| g.room_rect(area, r).map(|v| format!("{r:02X}@{},{} {}x{}", v[0], v[1], v[2], v[3]))).collect();
+                println!("Oberwelt {area:02X}: {}", rr.join("  "));
+            }
+        }
+        for sp in spaces {
+            let Some((x0, y0, x1, y1)) = d.bounds(sp) else { continue };
+            let sc = (((x1 - x0).max(y1 - y0) as f32) / 1024.0).ceil().max(1.0) as i32;
+            let (w, h) = (((x1 - x0) / sc) as usize, ((y1 - y0) / sc) as usize);
+            let mut img = vec![crate::gfx::Color32::from_rgb(20, 24, 52); w * h];
+            for y in 0..h {
+                for x in 0..w {
+                    let (wx, wy) = (x0 + x as i32 * sc, y0 + y as i32 * sc);
+                    let k = (sp, wx.div_euclid(256), wy.div_euclid(256));
+                    if let Some(c) = d.chunks.get(&k) {
+                        let o = ((wy.rem_euclid(256) * 256 + wx.rem_euclid(256)) * 4) as usize;
+                        if c[o + 3] != 0 {
+                            img[y * w + x] = crate::gfx::Color32::from_rgb(c[o], c[o + 1], c[o + 2]);
+                        }
+                    }
+                }
+            }
+            crate::devtest::bmp(&format!("{out}/gen_{sp:03}.bmp"), w, h, &img);
+        }
     }
 
     /// Picori: Grundlagen der Karte – Ansicht beim Laufen, Bild ohne Figuren, Fundorte mit Position und Stand

@@ -331,8 +331,8 @@ patch('port/port_save.c', [
 
 # (Magenta-Hintergrund für Aufnahmen und Bild ohne Figuren für die Karte stehen oben bei port_ppu.cpp)
 
-# eigene Karte (Zelda Core): Blättert man im Pausenmenü zur Kartenseite, bleibt das Spiel auf der aktuellen Seite
-# und meldet das – Zelda Core zeigt dann seine eigene Karte (tmc_map_request / tmc_menu_goto in tmc_core.c)
+# eigene Karte (Zelda Core): Die Kartenseite des Pausenmenüs entfällt, L/R wechselt zwischen Items und Quest-Status
+# (die eigene Karte öffnet mit Minus)
 patch('src/menu/pauseMenu.c', [
     ('''    if (sub_080A51F4() && (gMenu.field_0xc != NULL)) {
         iVar1 = -1;''', '''#ifdef TMC_CORE_DLL
@@ -342,11 +342,14 @@ patch('src/menu/pauseMenu.c', [
         iVar1 = -1;'''),
     ('''        if (iVar1 >= 0) {
             switch (bVar5 = gMenu.field_0xc[iVar1]) {''', '''#ifdef TMC_CORE_DLL
-        /* Zelda Core: Kartenseite durch die eigene Karte ersetzen */
+        /* Zelda Core: keine Kartenseite (die eigene Karte öffnet mit Minus) – L/R wechselt zwischen Items und
+         * Quest-Status */
         if (iVar1 >= 0 && gTmcCoreOwnMap) {
             s32 t = gMenu.field_0xc[iVar1];
             if (t == 4 || t == 5 || t == 6 || t == 0xf) {
-                gTmcCoreMapReq = 1;
+                gPauseMenuOptions.screen2 = gPauseMenuOptions.screen == 1 ? 2 : 1;
+                SoundReq(SFX_TEXTBOX_OPEN);
+                gMenu.field_0xc = NULL;
                 iVar1 = -1;
             }
         }
