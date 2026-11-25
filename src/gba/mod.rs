@@ -23,7 +23,8 @@ pub const ICON_W: usize = 24;
 /// 30 Reihen: der Schatten unter dem Tastenkreis reicht bis in die letzte Reihe
 pub const ICON_H: usize = 30;
 /// Item-Grafik aus dem Item-Menü (Seitenlänge in Pixeln)
-pub const INV_ICON: usize = 18;
+/// 20×20: lange Items (Feuerstab) und Bomben ganz
+pub const INV_ICON: usize = 20;
 /// Kästchen der Item-Leiste (Pixel), wie die Kästchen im Item-Menü
 pub const TILE_W: usize = 26;
 pub const TILE_H: usize = 22;
@@ -804,6 +805,17 @@ mod running {
         pub fn room_marks(&self) -> Vec<(u8, i32, i32)> {
             self.rc.as_ref().map_or(Vec::new(), |c| c.room_marks())
         }
+        pub fn room_exits(&self) -> Vec<(i32, i32, u8, u8, i32, i32)> {
+            self.rc.as_ref().map_or(Vec::new(), |c| c.room_exits())
+        }
+        pub fn set_noclip(&self, on: bool) {
+            if let Some(c) = &self.rc {
+                c.set_noclip(on);
+            }
+        }
+        pub fn cheat_complete(&self) -> i32 {
+            self.rc.as_ref().map_or(0, |c| c.cheat_complete())
+        }
         pub fn place_safe(&self) -> bool {
             self.rc.as_ref().is_some_and(|c| c.place_safe())
         }
@@ -1134,8 +1146,8 @@ pub fn bar_tile(item: &[u8], sel: bool) -> Vec<crate::gfx::Color32> {
             }
         }
     }
-    // Item (INV_ICON²): links oben bei (cx - 9, cy - 15), wie im Item-Menü ausgeschnitten
-    let (ox, oy) = (cx - 9, cy - 15);
+    // Item (INV_ICON²): links oben bei (cx - 10, cy - 16), wie im Item-Menü ausgeschnitten
+    let (ox, oy) = (cx - 10, cy - 16);
     for y in 0..INV_ICON {
         for x in 0..INV_ICON {
             let o = (y * INV_ICON + x) * 4;
@@ -1220,7 +1232,7 @@ pub fn item_from_b(hud: &[u8], ring: &[u8], off: (isize, isize), counted: bool) 
                 continue;
             }
             // Anzahl (Bomben, Pfeile) unten rechts gehört nicht zur Grafik
-            if counted && x >= INV_ICON - 5 && y >= 13 {
+            if counted && x >= INV_ICON - 6 && y >= 14 {
                 continue;
             }
             let h = (hy as usize * ICON_W + hx as usize) * 4;
@@ -1241,14 +1253,34 @@ pub fn clean_counted(img: &mut [u8], item: u8) {
     }
     let s = INV_ICON;
     let bomb = matches!(item, 7 | 8);
-    for y in 11..s {
-        for x in 12..s {
+    // Mitte der Bombe aus ihrer Breite in den Zeilen über den Ziffern (dort ist sie noch vollständig)
+    let mut axis2 = 19isize;
+    if bomb {
+        let (mut lo, mut hi) = (s as isize, -1isize);
+        for y in 7..12 {
+            for x in 0..s {
+                if img[(y * s + x) * 4 + 3] != 0 {
+                    lo = lo.min(x as isize);
+                    hi = hi.max(x as isize);
+                }
+            }
+        }
+        if hi >= lo {
+            axis2 = lo + hi;
+        }
+    }
+    for y in 12..s {
+        for x in 13..s {
             let o = (y * s + x) * 4;
             img[o + 3] = 0;
             if bomb {
-                let mx = 17usize.saturating_sub(x);
+                let mx = axis2 - x as isize;
+                if mx < 0 || mx >= 13 {
+                    continue;
+                }
+                let mx = mx as usize;
                 let m = (y * s + mx) * 4;
-                if mx < 12 && img[m + 3] != 0 {
+                if img[m + 3] != 0 {
                     let px = [img[m], img[m + 1], img[m + 2], 255];
                     img[o..o + 4].copy_from_slice(&px);
                 }
@@ -1281,7 +1313,7 @@ pub fn crop_inv_icon(px: &[u8], w: usize, h: usize, cx: usize, cy: usize, under_
     for y in 0..S {
         for x in 0..S {
             // Zeilen -15..+2 um den Ankerpunkt: manche Items (Spiegelschild, Handschuhe) reichen bis +2
-            let (fx, fy) = ((cx + x) as isize - 9, (cy + y) as isize - 15);
+            let (fx, fy) = ((cx + x) as isize - 10, (cy + y) as isize - 16);
             if fx < 0 || fy < 0 || fx as usize >= w || fy as usize >= h {
                 continue;
             }
@@ -2092,6 +2124,44 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
         crate::devtest::bmp(&format!("{out}/travel.bmp"), g.w, g.h, &c);
     }
 
+    /// Picori: No-Clip – gleiche Strecke nach oben laufen ohne/mit Cheat
+    #[test]
+    #[ignore]
+    fn dev_rc_noclip() {
+        let (Ok(p), Ok(st)) = (std::env::var("PASTLINK_GBA_ROM"), std::env::var("GBA_RC_STATE")) else { return };
+        let mut g = Gba::load_with(Path::new(&p), true, false).unwrap();
+        while g.loading() {
+            g.run_frame(0);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let raw = lz4_flex::decompress_size_prepended(&std::fs::read(st).unwrap()).unwrap();
+        assert!(g.load_state(&raw));
+        let rr = g.room_rect(0x03, 0x06).unwrap();
+        let mut f = 0;
+        while !g.travel(0x03, 0x06, rr[2] / 2, rr[3] / 2) && f < 600 {
+            g.run_frame(if f % 20 < 2 { 0x0080 } else { 0 });
+            f += 1;
+        }
+        for _ in 0..200 {
+            g.run_frame(0);
+        }
+        let base = g.save_state().unwrap();
+        for dir in [0x0800u16, 0x0400, 0x0200, 0x0100] {
+            for on in [false, true] {
+                assert!(g.load_state(&base));
+                g.set_noclip(on);
+                let a = g.map_view().unwrap();
+                for _ in 0..240 {
+                    g.run_frame(dir);
+                }
+                let b = g.map_view().unwrap();
+                println!("Schalter in der DLL: {}", g.rc_debug(9));
+                println!("Richtung {dir:04x} No-Clip {on}: Link von {},{} nach {},{} (Raum {:02X}/{:02X})", a[9], a[10], b[9], b[10], b[0], b[1]);
+            }
+        }
+        g.set_noclip(false);
+    }
+
     /// Picori: ganze Karte vorab erstellen (alle Räume), Dauer messen, Übersichtsbilder je Raum speichern
     #[test]
     #[ignore]
@@ -2146,6 +2216,7 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
         println!("Räume auf der Karte: {}", spaces.len());
         let cnt = |k: u8| d.marks.iter().filter(|m| m.1 == k).count();
         println!("Punkte: Schrumpfpunkte {}, Windwappen {}, Bohnenranken {}", cnt(1), cnt(2), cnt(3));
+        println!("Türen: {} (Oberwelt {})", d.doors.len(), d.doors.iter().filter(|x| x.sp == 0).count());
         for area in 0u8..0x90 {
             if g.area_kind(area) & 1 != 0 {
                 let rr: Vec<String> = (0..g.room_count(area) as u8).filter_map(|r| g.room_rect(area, r).map(|v| format!("{r:02X}@{},{} {}x{}", v[0], v[1], v[2], v[3]))).collect();

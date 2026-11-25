@@ -1700,6 +1700,13 @@ void CalculateEntityTileCollisions(Entity* this, u32 direction, u32 collisionTyp
     /* Noclip debug toggle: report no tile collisions for the player so
      * ProcessMovementInternal never blocks or redirects its movement. Player
      * only (enemies/objects still collide); gated off under Console-Parity. */
+#ifdef TMC_CORE_DLL
+    /* Zelda Core: Cheat „durch Wände gehen“ */
+    extern int gTmcCoreNoclip;
+    if (this == &gPlayerEntity.base && gTmcCoreNoclip) {
+        colResult = COL_NONE;
+    }
+#endif
     if (this == &gPlayerEntity.base && Port_Debug_NoclipEnabled()) {
         colResult = COL_NONE;
     }

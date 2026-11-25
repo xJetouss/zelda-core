@@ -2804,6 +2804,14 @@ impl App {
                 g.areas_dirty = true;
             }
         }
+        // Breitbildrand: Karte des aktuellen Gebiets mit dem Arbeitsspeicher abgleichen (Türen, Gras, Wände)
+        if g.areas_done && self.fps_count % 10 == 0 && alttp::ram8(&g.snes, 0x7E0010) == 0x09 && alttp::ram8(&g.snes, 0x7E0011) == 0 && alttp::ram8(&g.snes, 0x7E001B) == 0 {
+            let w = &g.snes.bus.wram;
+            let live: Vec<u16> = (0..4096).map(|i| w[0x2000 + i * 2] as u16 | (w[0x2001 + i * 2] as u16) << 8).collect();
+            if ppu::refresh_area_m16(alttp::ram8(&g.snes, 0x7E040A), &live) {
+                g.areas_dirty = true;
+            }
+        }
         if g.areas_dirty && self.fps_count % 900 == 0 {
             save_areas(&g.path, &ppu::all_areas());
             g.areas_dirty = false;

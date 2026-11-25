@@ -3171,3 +3171,35 @@ fn dev_doorpairs() {
     }
     println!("{n} Schlüsseltüren, {fixed} jetzt zusätzlich als aufgeschlossen erkannt");
 }
+
+/// Spielstand laden: Emulation gegen Zelda-3-Modus (Tür/Gras nach dem Laden), Bilder state_emu.bmp / state_z3.bmp
+#[test]
+#[ignore]
+fn dev_state_z3() {
+    let Some((snes, _rom)) = boot() else { return };
+    let Ok(st) = std::env::var("STATE_FILE") else { return };
+    let data = std::fs::read(st).unwrap();
+    // Emulation
+    let mut a = snes.clone();
+    a.load_state(&data).unwrap();
+    for _ in 0..30 {
+        a.run_frame();
+        a.bus.apu.dsp.out.clear();
+    }
+    shot(&a, "state_emu");
+    println!("Emulation: {}", status(&a));
+    // Zelda 3: einschalten, dann laden (wie in der App)
+    let mut b = snes.clone();
+    let _ = crate::z3::sync(&mut b, true);
+    for _ in 0..5 {
+        b.run_frame();
+        b.bus.apu.dsp.out.clear();
+    }
+    b.load_state(&data).unwrap();
+    for _ in 0..30 {
+        b.run_frame();
+        b.bus.apu.dsp.out.clear();
+    }
+    shot(&b, "state_z3");
+    println!("Zelda 3 aktiv: {} – {}", b.z3.active(), status(&b));
+}

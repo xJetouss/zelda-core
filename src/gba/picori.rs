@@ -73,6 +73,9 @@ struct Api {
     travel: FWarp,
     place_safe: FVoidI,
     room_marks: FProg,
+    noclip: FInt,
+    complete: FVoidI,
+    room_exits: FProg,
 }
 
 /// geladene DLL, ROM des laufenden Picori, Anfangszustand
@@ -159,6 +162,9 @@ fn load_api() -> Result<&'static Api, String> {
             travel: f!("tmc_travel"),
             place_safe: f!("tmc_place_safe"),
             room_marks: f!("tmc_room_marks"),
+            noclip: f!("tmc_noclip"),
+            complete: f!("tmc_cheat_complete"),
+            room_exits: f!("tmc_room_exits"),
         };
         Ok(Box::leak(Box::new(api)))
     }
@@ -505,6 +511,27 @@ impl Core {
         let mut v = vec![0i32; 3 * 64];
         let n = unsafe { (self.api.room_marks)(v.as_mut_ptr(), v.len() as i32) }.max(0) as usize;
         (0..n.min(64)).map(|i| (v[i * 3] as u8, v[i * 3 + 1], v[i * 3 + 2])).collect()
+    }
+    /// Cheats: durch Wände gehen; alles, was in die 100 % zählt (Rückgabe: Fundorte als geholt markiert)
+    /// Türen des aktuellen Raums: (x, y Welt, Zielgebiet, Zielraum, Ziel-x, Ziel-y im Raum)
+    pub fn room_exits(&self) -> Vec<(i32, i32, u8, u8, i32, i32)> {
+        if !self.ready {
+            return Vec::new();
+        }
+        let mut v = vec![0i32; 7 * 64];
+        let n = unsafe { (self.api.room_exits)(v.as_mut_ptr(), v.len() as i32) }.max(0) as usize;
+        (0..n.min(64)).map(|i| (v[i * 7 + 1], v[i * 7 + 2], v[i * 7 + 3] as u8, v[i * 7 + 4] as u8, v[i * 7 + 5], v[i * 7 + 6])).collect()
+    }
+    pub fn set_noclip(&self, on: bool) {
+        if self.ready {
+            unsafe { (self.api.noclip)(on as i32) };
+        }
+    }
+    pub fn cheat_complete(&self) -> i32 {
+        if !self.ready {
+            return 0;
+        }
+        unsafe { (self.api.complete)() }
     }
     pub fn place_safe(&self) -> bool {
         self.ready && unsafe { (self.api.place_safe)() } != 0

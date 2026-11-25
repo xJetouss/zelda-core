@@ -207,6 +207,20 @@ impl Root {
             }
             7 => {
                 v.push(self.item("gba_cheats", t("Cheat-Liste…", "Cheat list…"), String::new(), true, true, cx, |r| r.app.gba.win_cheats = true));
+                if self.app.gba.game.as_ref().is_some_and(|g| g.is_recomp() && g.is_minish()) {
+                    v.push(Self::heading(t("PC-Fassung", "PC version")));
+                    chk!("gba_noclip", t("Durch Wände gehen (No-Clip)", "Walk through walls (no clip)"), gba.noclip);
+                    v.push(self.item("gba_complete", t("100 %: alles holen", "100 %: get everything"), String::new(), true, false, cx, |r| {
+                        let en = r.app.s.ui_en;
+                        let n = r.app.gba.game.as_ref().map_or(0, |g| {
+                            // Fundorte der Logik laden (falls die Karte noch nicht offen war)
+                            let _ = g.locations(crate::gba::tmcmap::LOGIC);
+                            g.cheat_complete()
+                        });
+                        r.app.gba.map.visit_all();
+                        r.app.msg(&format!("{} ({n} {})", if en { "100 %: everything collected" } else { "100 %: alles geholt" }, if en { "locations" } else { "Fundorte" }));
+                    }));
+                }
                 if matches!(game_code(self).as_str(), "BZMP" | "BZME") {
                     v.push(Self::heading(t("Fertige Cheats", "Ready-made cheats")));
                     for (k, (de, e, code)) in MINISH_EU.iter().enumerate() {

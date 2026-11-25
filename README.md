@@ -1,4 +1,4 @@
-# Zelda Core 0.43 – A Link to the Past & The Minish Cap
+# Zelda Core 0.44 – A Link to the Past & The Minish Cap
 
 Eigener SNES-Emulator in Rust, zugeschnitten auf *The Legend of Zelda: A Link to the Past*.
 **Keine ROM enthalten** – du brauchst eine Kopie deines eigenen Moduls (`.sfc`/`.smc`).
@@ -200,7 +200,10 @@ Schalter: *Bild → Recomp (Picori)* (Standard an; aus = mGBA).
   Kartenseite mehr, L/R wechselt zwischen Items und Quest-Status. Abschaltbar unter *Spiel*.
   Bedienung wie bei A Link to the Past: Fadenkreuz mit dem Stick (schiebt die Karte am Rand mit), rechter Stick
   zoomt, Y wechselt die Anzeige (Übersicht, Sammeln, Schnellreise, Alles), X zeigt alles oder nur Gesammeltes, unter
-  DUNGEON/RÄUME wechselt Y den Raum. Eingezeichnet sind auch Schrumpfpunkte, Windwappen und Bohnenranken.
+  DUNGEON/RÄUME wechselt Y den Raum. Eingezeichnet sind auch Schrumpfpunkte, Windwappen, Bohnenranken und jede Tür
+  (Häuser, Cafés, Höhlen, Dungeons) als Reisepunkt; unbesuchte erscheinen grau bei X = alles. Anzeige „Eigene“:
+  jede Art einzeln an/aus. Das Ziel der nächsten Hauptquest ist markiert. Im HD-Bildmodus wird die Karte geglättet.
+- Cheats der PC-Fassung (Menü *Cheats*): durch Wände gehen und „100 %: alles holen“.
   **Schnellreise:** Jeder besuchte Raum ist ein Reisepunkt, A reist hin (Link landet auf freiem Boden).
   **Eigene Markierungen:** A auf eine freie Stelle, ←/→ Symbol, A setzen; A auf eine Markierung entfernt sie
   (gespeichert in `<rom>.tmcpins`). Die Karte kann auch im eigenen Fenster laufen (*Spiel → Karte im eigenen Fenster*).

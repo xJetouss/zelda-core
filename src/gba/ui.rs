@@ -95,6 +95,9 @@ pub struct GbaView {
     dev_tick: u32,
     /// The Minish Cap (PC-Fassung): eigene Karte
     pub map: super::mapui::MapUi,
+    /// Cheat: durch Wände gehen (PC-Fassung)
+    pub noclip: bool,
+    noclip_set: bool,
 }
 
 impl Default for GbaView {
@@ -156,6 +159,8 @@ impl Default for GbaView {
             b_patch: None,
             dev_tick: 0,
             map: Default::default(),
+            noclip: false,
+            noclip_set: false,
         }
     }
 }
@@ -272,6 +277,11 @@ impl App {
         let save_sram = self.s.save_sram;
         let Some(g) = self.gba.game.as_mut() else { return };
         g.save_sav = save_sram;
+        // Cheat „durch Wände gehen“ an Picori weitergeben
+        if self.gba.noclip != self.gba.noclip_set && !g.loading() {
+            g.set_noclip(self.gba.noclip);
+            self.gba.noclip_set = self.gba.noclip;
+        }
         // Picori startet noch: weiterladen, auch wenn ein Menü offen ist (sonst bleibt „Recomp startet“ stehen)
         if g.loading() {
             g.run_frame(0);
@@ -619,11 +629,9 @@ impl App {
             self.gba.inv_tex_hd = hd;
             for (&i, img) in &self.gba.icons_inv {
                 for sel in [false, true] {
-                    let count = match i {
-                        7 | 8 => Some(counts.0),
-                        9 | 10 => Some(counts.1),
-                        _ => None,
-                    };
+                    // keine Anzahl auf den Kästchen (sie verdeckt die Bomben)
+                    let _ = counts;
+                    let count: Option<u8> = None;
                     let px = super::bar_tile_count(img, sel, count);
                     let (mut tmp, mut out) = (Vec::new(), Vec::new());
                     let size = crate::filters::apply(filter, &px, super::TILE_W, super::TILE_H, &mut tmp, &mut out);
@@ -655,7 +663,20 @@ impl App {
                     // genauer: aus der B-Aufnahme minus leerem B-Kreis (wie das Y-Feld)
                     if !self.gba.icons_inv.contains_key(i) {
                         if let (Some(hud), Some(ring)) = (self.gba.icons_rgba.get(i), self.gba.ring_raw.as_ref()) {
-                            let mut out = super::item_from_b(hud, ring, self.gba.item_off.unwrap_or((1, 4)), super::minish::COUNTED.contains(i));
+                            let off = self.gba.item_off.unwrap_or((1, 4));
+                            let mut out = super::item_from_b(hud, ring, off, super::minish::COUNTED.contains(i));
+                            // nur, was auch nach dem Mehrheitsvergleich aller Aufnahmen kein Kreis ist: der Kreis mit
+                            // Item ist eine Figur, der leere Kreis eine Hintergrund-Ebene – die Pixel weichen ab
+                            const S: usize = super::INV_ICON;
+                            for y in 0..S {
+                                for x in 0..S {
+                                    let (hx, hy) = (off.0 + x as isize, off.1 + y as isize);
+                                    let gone = hx < 0 || hy < 0 || hx as usize >= super::ICON_W || hy as usize >= super::ICON_H || img[(hy as usize * super::ICON_W + hx as usize) * 4 + 3] == 0;
+                                    if gone {
+                                        out[(y * S + x) * 4 + 3] = 0;
+                                    }
+                                }
+                            }
                             super::clean_counted(&mut out, *i);
                             self.gba.icons_inv.insert(*i, out);
                             self.gba.inv_tex.clear();
@@ -808,8 +829,19 @@ impl App {
                         _ => None,
                     },
                 };
-                let img = if y_item != 0 { composed.as_ref().or_else(|| self.gba.icons_rgba.get(&y_item)) } else { None };
-                if let Some(img) = img.or_else(|| self.gba.icons_rgba.get(&0)) {
+                // Ersatz: die B-Aufnahme selbst – dann ohne die Anzahl unten rechts (Bomben, Bogen)
+                let fallback = (y_item != 0 && composed.is_none()).then(|| self.gba.icons_rgba.get(&y_item).cloned()).flatten().map(|mut v| {
+                    if super::minish::COUNTED.contains(&y_item) {
+                        for y in 15..super::ICON_H {
+                            for x in 13..super::ICON_W {
+                                v[(y * super::ICON_W + x) * 4 + 3] = 0;
+                            }
+                        }
+                    }
+                    v
+                });
+                let owned = if y_item != 0 { composed.or(fallback) } else { None };
+                if let Some(img) = owned.as_ref().or_else(|| self.gba.icons_rgba.get(&0)) {
                     // links neben dem B-Feld, wo Picori es gerade zeichnet (Spiel, Item-Menü, Breitbild)
                     let (bx, y0) = g.b_box().unwrap_or(((super::ICON_X + g.hud_dx()) as isize, super::ICON_Y as isize));
                     let x0 = (bx - 24).max(0) as usize;
@@ -1118,6 +1150,24 @@ impl App {
             let mut skip = Vec::new();
             g.take_audio(&mut skip);
             self.gba.last_hp = 0;
+            // Item-Grafiken neu aus dem geladenen Stand aufnehmen (alte Aufnahmen können aus einem
+            // ungünstigen Moment stammen – dann wäre das Quickmenü nach dem Laden falsch)
+            self.gba.icons.clear();
+            self.gba.icons_rgba.clear();
+            self.gba.icons_menu.clear();
+            self.gba.icons_bare.clear();
+            self.gba.icons_inv.clear();
+            self.gba.inv_tex.clear();
+            self.gba.tile_tex.clear();
+            self.gba.tile_filter = None;
+            self.gba.y_empty = None;
+            self.gba.ring_raw = None;
+            self.gba.item_off = None;
+            self.gba.inv_grabbed = false;
+            self.gba.b_patch = None;
+            self.gba.y_checked = 0;
+            self.gba.capture_at = 0;
+            self.gba.dirty = true;
             if let Some(m) = self.slot_meta(slot) {
                 self.gba.play_frames = m.play_frames;
                 self.gba.deaths = m.deaths;

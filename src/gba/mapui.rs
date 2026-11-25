@@ -100,6 +100,8 @@ pub struct MapUi {
     pick: Option<usize>,
     /// Ausschnitt für Mausbedienung
     map_rect: gfx::Rect,
+    /// Kacheln geglättet (HD-Bildmodus) gebaut
+    tex_hd: Option<bool>,
     /// Entwicklung: zuletzt ausgelöste Karte-Taste (PASTLINK_GBA_KEYS „m:bild“), Anzeige-Bilder seit dem Öffnen
     pub dev_m: u32,
     dev_ui: u32,
@@ -113,8 +115,11 @@ pub struct MapUi {
     /// Fadenkreuz (Abstand zur Kartenmitte, Bildschirmpunkte) und halbe Kartengröße – wie bei A Link to the Past
     cur: gfx::Vec2,
     half: gfx::Vec2,
-    /// Anzeige (Y, wie bei A Link to the Past): 0 Übersicht, 1 Sammeln, 2 Schnellreise, 3 Alles
+    /// Anzeige (Y, wie bei A Link to the Past): 0 Übersicht, 1 Sammeln, 2 Schnellreise, 3 Alles, 4 Eigene
     filter: u8,
+    /// „Eigene“: was gezeigt wird (Bits wie CUSTOM_ITEMS), Zeilen der Liste fürs Anwählen
+    custom: u16,
+    custom_rows: Vec<(gfx::Rect, u8)>,
     /// eigene Markierungen (Raum, x, y, Symbol) und besuchte Räume (Schnellreise), gespeichert in `<rom>.tmcpins`
     pins: Vec<(Space, f32, f32, u8)>,
     visited: std::collections::BTreeSet<(u8, u8)>,
@@ -138,7 +143,25 @@ enum Sel {
     Pin(usize),
     /// besonderer Punkt (Index in `MapData::marks`)
     Mark(usize),
+    /// Tür / Eingang (Index in `MapData::doors`)
+    Door(usize),
 }
+
+/// „Eigene“ Anzeige: was man an- und ausschalten kann (deutsch, englisch, Symbol)
+const CUSTOM_ITEMS: [(&str, &str, Icon); 9] = [
+    ("Herzteile", "Heart pieces", Icon::Heart),
+    ("Truhen", "Chests", Icon::Chest),
+    ("Andere Fundorte", "Other locations", Icon::Game),
+    ("Reisepunkte / Türen", "Travel points / doors", Icon::Door),
+    ("Schrumpfpunkte", "Minish portals", Icon::Dot),
+    ("Windwappen", "Wind crests", Icon::Note),
+    ("Bohnenranken", "Beanstalks", Icon::Upgrade),
+    ("Eigene Markierungen", "Own markers", Icon::Star),
+    ("Ziel der Hauptquest", "Main quest goal", Icon::Quest),
+];
+
+/// Ziel der Hauptquest: Gebiete des Dungeons je Hauptquest (Reihenfolge wie QUESTS), danach Dunkles Schloss
+const MAIN_GOALS: [&[u8]; 7] = [&[0x48, 0x4A], &[0x50], &[0x18, 0x58], &[0x60], &[0x70], &[0x78, 0x81], &[0x88, 0x89, 0x8D]];
 
 /// Symbole für eigene Markierungen (wie bei A Link to the Past)
 const PIN_ICONS: [Icon; 5] = [Icon::Star, Icon::Quest, Icon::Question, Icon::Cross, Icon::Heart];
@@ -169,6 +192,7 @@ impl Default for MapUi {
             owned: Vec::new(),
             pick: None,
             map_rect: gfx::Rect::NOTHING,
+            tex_hd: None,
             dev_m: u32::MAX,
             dev_ui: 0,
             gen: None,
@@ -178,6 +202,8 @@ impl Default for MapUi {
             cur: gfx::Vec2::ZERO,
             half: gfx::vec2(200.0, 150.0),
             filter: 0,
+            custom: 0xFFFF,
+            custom_rows: Vec::new(),
             pins: Vec::new(),
             visited: Default::default(),
             pins_dirty: false,
@@ -278,9 +304,12 @@ impl App {
                     }
                 }
             }
-            let (pins, visited) = load_pins(&g.path);
+            let (pins, visited, custom) = load_pins_all(&g.path);
             m.pins = pins;
             m.visited = visited;
+            if let Some(c) = custom {
+                m.custom = c;
+            }
             d.locs_loaded = true;
             m.data = Some(d);
             m.rom = Some(g.path.clone());
@@ -295,6 +324,7 @@ impl App {
             if m.gen.is_some() {
                 if let Some(d) = m.data.as_mut() {
                     d.marks.clear();
+                    d.doors.clear();
                 }
             }
         }
@@ -334,7 +364,7 @@ impl App {
         }
         if m.pins_dirty {
             m.pins_dirty = false;
-            save_pins(&g.path, &m.pins, &m.visited);
+            save_pins(&g.path, &m.pins, &m.visited, m.custom);
         }
         // gesehene Gebiete eintragen: Bild ohne Figuren an seiner Weltposition (nur im Raum, nur im Spiel)
         let tick = self.gba.play_frames;
@@ -587,7 +617,7 @@ impl App {
                 self.gba.map.spoiler = !self.gba.map.spoiler;
             }
             if tab == 0 && pressed & Y != 0 {
-                self.gba.map.filter = (self.gba.map.filter + 1) % 4;
+                self.gba.map.filter = (self.gba.map.filter + 1) % 5;
             }
             // Y: nächster Dungeon/Raum
             if tab == 1 && pressed & Y != 0 {
@@ -599,6 +629,16 @@ impl App {
                 }
             }
             if pressed & A != 0 {
+                // „Eigene“: Fadenkreuz auf einer Zeile der Liste schaltet sie an/aus
+                let m = &mut self.gba.map;
+                let aim = m.map_rect.center() + m.cur;
+                if m.filter == 4 && tab == 0 {
+                    if let Some(&(_, bit)) = m.custom_rows.iter().find(|(r, _)| r.contains(aim)) {
+                        m.custom ^= 1 << bit;
+                        m.pins_dirty = true;
+                        return;
+                    }
+                }
                 self.gba_map_activate();
                 return;
             }
@@ -896,6 +936,16 @@ impl App {
         let sp = self.gba_map_space();
         let space_name = self.gba_space_name(sp);
         let t = ctx.input(|i| i.time) as f32;
+        // HD-Bildmodus: Karte geglättet statt pixelig (Kacheln bei einem Wechsel neu anlegen)
+        let hd = self.s.filter.is_hd();
+        if self.gba.map.tex_hd != Some(hd) {
+            self.gba.map.tex_hd = Some(hd);
+            self.gba.map.tex.clear();
+            if let Some(d) = self.gba.map.data.as_mut() {
+                d.dirty = d.chunks.keys().copied().filter(|k| k.0 < 0xFFF0).collect();
+            }
+        }
+        let topt = if hd { gfx::TextureOptions::LINEAR } else { gfx::TextureOptions::NEAREST };
         // Maus: Zeiger = Fadenkreuz
         if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
             if r.contains(pos) && ctx.input(|i| i.pointer.delta().length() > 0.0) {
@@ -908,15 +958,15 @@ impl App {
         // Texturen der geänderten Kacheln (einige je Bild, damit nichts ruckelt)
         let mut n = 0;
         while let Some(k) = d.dirty.pop() {
-            if k.0 == 0xFFFF {
+            if k.0 >= 0xFFF0 {
                 continue;
             }
             if let Some(px) = d.chunks.get(&k) {
                 let img = gfx::ColorImage::from_rgba_unmultiplied([CH, CH], px);
                 match m.tex.get_mut(&k) {
-                    Some(t) => t.set(img, gfx::TextureOptions::NEAREST),
+                    Some(t) => t.set(img, topt),
                     None => {
-                        let t = ctx.load_texture(format!("tmcmap-{}-{}-{}", k.0, k.1, k.2), img, gfx::TextureOptions::NEAREST);
+                        let t = ctx.load_texture(format!("tmcmap-{}-{}-{}", k.0, k.1, k.2), img, topt);
                         m.tex.insert(k, t);
                     }
                 }
@@ -977,52 +1027,87 @@ impl App {
         }
         // Symbole sammeln: (Position, Auswahl, Symbol, Farbe, Punkt in der Übersicht)
         let rad = fs * 0.55;
-        let filt = m.filter.min(3);
+        let filt = m.filter.min(4);
         let spoiler = m.spoiler;
-        // Anzeige (Y): 0 Übersicht, 1 Sammeln, 2 Schnellreise, 3 Alles
-        let show_travel = filt != 1;
-        let show_special = filt != 1;
+        let cm = m.custom;
+        // Anzeige (Y): 0 Übersicht, 1 Sammeln, 2 Schnellreise, 3 Alles, 4 Eigene (Bits wie CUSTOM_ITEMS)
+        let show = |bit: u8| -> bool {
+            match filt {
+                0 => matches!(bit, 0 | 3 | 7 | 8),
+                1 => matches!(bit, 0 | 1 | 2 | 7),
+                2 => matches!(bit, 3 | 5 | 7),
+                3 => true,
+                _ => cm & (1 << bit) != 0,
+            }
+        };
         let mut marks: Vec<(gfx::Pos2, Sel, Icon, Color32, bool)> = Vec::new();
-        if filt != 2 {
-            for (i, l) in d.locs.iter().enumerate() {
-                let Some(at) = l.at.filter(|a| a.0 == sp) else { continue };
-                let done = l.done == Some(true);
-                // Übersicht: nur Herzteile und Truhen; X: ohne „alles“ nur Gesammeltes
-                if (filt == 0 && !matches!(l.kind, LocKind::HeartPiece | LocKind::Chest)) || (!spoiler && !done) {
-                    continue;
+        for (i, l) in d.locs.iter().enumerate() {
+            let Some(at) = l.at.filter(|a| a.0 == sp) else { continue };
+            let done = l.done == Some(true);
+            let bit = match l.kind {
+                LocKind::HeartPiece | LocKind::HeartContainer => 0,
+                LocKind::Chest => 1,
+                _ => 2,
+            };
+            // X: ohne „alles“ nur Gesammeltes
+            if !show(bit) || (!spoiler && !done) {
+                continue;
+            }
+            let (icon, col) = kind_look(l.kind);
+            // wie bei A Link to the Past: gesammelt = Farbe, fehlt noch = grau
+            marks.push((to_screen(at.1, at.2), Sel::Loc(i), icon, if done { col } else { GREYC }, true));
+        }
+        for (i, mk) in d.marks.iter().enumerate() {
+            let bit = match mk.1 {
+                1 => 4,
+                2 => 5,
+                _ => 6,
+            };
+            if mk.0 != sp || !show(bit) {
+                continue;
+            }
+            let (icon, col) = match mk.1 {
+                1 => (Icon::Dot, Color32::from_rgb(190, 120, 255)),
+                2 => (Icon::Note, Color32::from_rgb(140, 230, 255)),
+                _ => (Icon::Upgrade, Color32::from_rgb(110, 220, 90)),
+            };
+            marks.push((to_screen(mk.2, mk.3), Sel::Mark(i), icon, col, false));
+        }
+        // unbesuchte Reisepunkte: nur bei X = alles und nicht in der Übersicht (sonst zu voll)
+        let all_tp = spoiler && filt != 0;
+        if show(3) {
+            // Reisepunkte: Türen (Häuser, Cafés, Höhlen, Dungeons) und besuchte Räume; aktiv = dort schon gewesen,
+            // inaktive nur bei X = alles (grau)
+            for (i, dr) in d.doors.iter().enumerate() {
+                let on = m.visited.contains(&(dr.area, dr.room));
+                if dr.sp == sp && (on || all_tp) {
+                    marks.push((to_screen(dr.x, dr.y), Sel::Door(i), Icon::Door, if on { DOOR } else { GREYC }, false));
                 }
-                let (icon, col) = kind_look(l.kind);
-                // wie bei A Link to the Past: gesammelt = Farbe, fehlt noch = grau
-                marks.push((to_screen(at.1, at.2), Sel::Loc(i), icon, if done { col } else { GREYC }, true));
             }
-        }
-        if show_special {
-            for (i, mk) in d.marks.iter().enumerate() {
-                if mk.0 != sp || (filt == 2 && mk.1 != 2) {
-                    continue;
-                }
-                let (icon, col) = match mk.1 {
-                    1 => (Icon::Dot, Color32::from_rgb(190, 120, 255)),
-                    2 => (Icon::Note, Color32::from_rgb(140, 230, 255)),
-                    _ => (Icon::Upgrade, Color32::from_rgb(110, 220, 90)),
-                };
-                marks.push((to_screen(mk.2, mk.3), Sel::Mark(i), icon, col, false));
-            }
-        }
-        if show_travel {
-            for &(a, rm) in &m.visited {
-                if let Some((rr, s)) = m.rects.get(&(a, rm)) {
-                    if *s == sp {
-                        marks.push((to_screen(rr[0] as f32 + rr[2] as f32 * 0.5, rr[1] as f32 + rr[3] as f32 * 0.5), Sel::Travel(a, rm), Icon::Door, DOOR, false));
-                    }
+            for (&(a, rm), (rr, s)) in &m.rects {
+                let on = m.visited.contains(&(a, rm));
+                // Räume der Oberwelt (die Gebiete selbst; Häuser haben ihre Tür)
+                if *s == sp && sp == 0 && rr[2] >= 200 && (on || all_tp) {
+                    marks.push((to_screen(rr[0] as f32 + rr[2] as f32 * 0.5, rr[1] as f32 + rr[3] as f32 * 0.5), Sel::Travel(a, rm), Icon::Door, if on { DOOR } else { GREYC }, false));
                 }
             }
         }
-        for (i, pn) in m.pins.iter().enumerate() {
-            if pn.0 == sp {
-                marks.push((to_screen(pn.1, pn.2), Sel::Pin(i), PIN_ICONS[pn.3 as usize % PIN_ICONS.len()], Color32::WHITE, false));
+        if show(7) {
+            for (i, pn) in m.pins.iter().enumerate() {
+                if pn.0 == sp {
+                    marks.push((to_screen(pn.1, pn.2), Sel::Pin(i), PIN_ICONS[pn.3 as usize % PIN_ICONS.len()], Color32::WHITE, false));
+                }
             }
         }
+        // Ziel der nächsten Hauptquest: Eingang des nächsten Dungeons
+        let next_main = QUESTS.iter().position(|q| q.2 && m.progress.get(q.3).is_none_or(|&v| v < q.4)).unwrap_or(MAIN_GOALS.len() - 1);
+        let goal = if show(8) {
+            let want = MAIN_GOALS[next_main.min(MAIN_GOALS.len() - 1)];
+            d.doors.iter().filter(|dr| want.contains(&dr.area)).min_by_key(|dr| dr.sp).map(|dr| (dr.sp, dr.x, dr.y))
+        } else {
+            None
+        };
+        let goal_name = QUESTS.get(next_main).filter(|q| q.2).map(|q| if en { q.1 } else { q.0 }).unwrap_or(if en { "Dark Hyrule Castle" } else { "Dunkles Hyrule-Schloss" });
         // Symbole am selben Ort im Kreis verteilen (wie bei A Link to the Past), nicht in der Übersicht
         if !overview {
             let mut groups: Vec<Vec<usize>> = Vec::new();
@@ -1058,10 +1143,16 @@ impl App {
                 };
                 (pretty(&l.name), format!("{} – {st}", l.kind.label(en)))
             }),
-            Some(Sel::Travel(a, _)) => Some((
+            Some(Sel::Travel(a, r)) => Some((
                 format!("{} {}", tr(en, "SCHNELLREISE:", "FAST TRAVEL:"), m.area_names.get(&a).cloned().unwrap_or_default()),
-                tr(en, "A: hinreisen", "A: travel there").to_string(),
+                if m.visited.contains(&(a, r)) { tr(en, "A: hinreisen", "A: travel there") } else { tr(en, "noch nicht besucht", "not visited yet") }.to_string(),
             )),
+            Some(Sel::Door(i)) => d.doors.get(i).map(|dr| {
+                (
+                    format!("{} {}", tr(en, "EINGANG:", "ENTRANCE:"), m.area_names.get(&dr.area).cloned().unwrap_or_default()),
+                    if m.visited.contains(&(dr.area, dr.room)) { tr(en, "A: hinreisen", "A: travel there") } else { tr(en, "noch nicht besucht", "not visited yet") }.to_string(),
+                )
+            }),
             Some(Sel::Pin(_)) => Some((tr(en, "EIGENE MARKIERUNG", "OWN MARKER").to_string(), tr(en, "A: entfernen", "A: remove").to_string())),
             Some(Sel::Mark(i)) => d.marks.get(i).map(|mk| {
                 let (de, e) = match mk.1 {
@@ -1095,16 +1186,17 @@ impl App {
                 continue;
             }
             let s = Some(*s_) == sel;
-            if matches!(s_, Sel::Travel(..)) {
-                let n = if s { 6.0 } else { 5.0 };
+            if matches!(s_, Sel::Travel(..) | Sel::Door(..)) {
+                // herausgezoomt kleiner (sonst ist die Karte voller Quadrate)
+                let n = if s { 6.0 } else if overview { if matches!(s_, Sel::Door(..)) { 2.0 } else { 3.0 } } else if matches!(s_, Sel::Door(..)) { 4.0 } else { 5.0 };
                 p.rect_filled(gfx::Rect::from_center_size(*pos, gfx::vec2((n + 2.0) * gp, (n + 2.0) * gp)), 0.0, Color32::from_rgb(16, 16, 24));
-                p.rect_filled(gfx::Rect::from_center_size(*pos, gfx::vec2(n * gp, n * gp)), 0.0, if s && (t * 4.0) as i64 % 2 == 0 { Color32::from_rgb(248, 216, 64) } else { DOOR });
+                p.rect_filled(gfx::Rect::from_center_size(*pos, gfx::vec2(n * gp, n * gp)), 0.0, if s && (t * 4.0) as i64 % 2 == 0 { Color32::from_rgb(248, 216, 64) } else { *col });
                 p.rect_filled(gfx::Rect::from_min_size(*pos - gfx::vec2(n * gp * 0.5, n * gp * 0.5), gfx::vec2(gp, gp)), 0.0, Color32::from_rgb(220, 255, 255));
                 continue;
             }
             if overview && *dot && !s {
                 // Übersicht: kleiner Punkt in der Farbe der Art
-                let dd = gp * 4.0;
+                let dd = gp * 3.0;
                 p.rect_filled(gfx::Rect::from_center_size(*pos, gfx::vec2(dd + gp * 2.0, dd + gp * 2.0)), 0.0, Color32::from_rgb(16, 16, 24));
                 p.rect_filled(gfx::Rect::from_center_size(*pos, gfx::vec2(dd, dd)), 0.0, *col);
                 continue;
@@ -1118,6 +1210,53 @@ impl App {
                 self.link_dot(p, lp, gp, rad * 0.6);
             }
         }
+        // Ziel der Hauptquest: pulsierender Rahmen mit Quest-Symbol (wie bei A Link to the Past)
+        if let Some((gsp, gx_, gy_)) = goal {
+            if gsp == sp {
+                let at = to_screen(gx_, gy_);
+                if r.expand(rad).contains(at) {
+                    let bob = ((t * 3.0).sin() * 2.0).round() * gp;
+                    let ss = rad * 1.1 + ((t * 4.0).sin() + 1.0) * gp;
+                    p.rect_stroke(gfx::Rect::from_center_size(at, gfx::vec2(ss * 2.0, ss * 2.0)), 0.0, Stroke::new(gp * 1.5, GOLD));
+                    paint_icon(p, at - gfx::vec2(0.0, ss + rad * 0.9 + bob), rad * 0.75, Icon::Quest, Color32::WHITE);
+                }
+            }
+            let txt = format!("{} {goal_name}", tr(en, "ZIEL:", "GOAL:"));
+            let small = fs * 0.75;
+            let tw = self.text_w(p, &txt, small);
+            let top = if sp != 0 { r.top() + fs * 2.0 } else { r.top() + fs * 0.4 };
+            let br = gfx::Rect::from_min_size(gfx::pos2(r.left() + fs * 0.4, top), gfx::vec2(tw + fs * 1.8, fs * 1.3));
+            p.rect_filled(br, 0.0, Color32::from_rgba_unmultiplied(12, 14, 36, 225));
+            p.rect_stroke(br, 0.0, Stroke::new(gp, GOLD));
+            paint_icon(p, br.left_center() + gfx::vec2(fs * 0.6, 0.0), fs * 0.35, Icon::Quest, Color32::WHITE);
+            self.mtext(p, br.left_center() + gfx::vec2(fs * 1.2, 0.0), gfx::Align2::LEFT_CENTER, &txt, small, Color32::WHITE);
+        }
+        // „Eigene“: Liste zum An-/Abhaken (Fadenkreuz drauf + A)
+        let mut rows = Vec::new();
+        if filt == 4 && sp == 0 {
+            let small = fs * 0.7;
+            let lh = fs * 1.2;
+            let pw = CUSTOM_ITEMS.iter().map(|c| self.text_w(p, if en { c.1 } else { c.0 }, small)).fold(0.0, f32::max) + fs * 3.4;
+            let panel = gfx::Rect::from_min_size(gfx::pos2(r.right() - pw - fs * 0.4, r.top() + fs * 2.0), gfx::vec2(pw, lh * CUSTOM_ITEMS.len() as f32 + fs * 0.5));
+            p.rect_filled(panel, 0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 215));
+            p.rect_stroke(panel, 0.0, Stroke::new(gp, crate::inventory::MENU_LINE));
+            for (k, (de, e_, ic)) in CUSTOM_ITEMS.iter().enumerate() {
+                let row = gfx::Rect::from_min_size(gfx::pos2(panel.left() + fs * 0.25, panel.top() + fs * 0.25 + k as f32 * lh), gfx::vec2(pw - fs * 0.5, lh));
+                let on = cm & (1 << k) != 0;
+                if row.contains(aim) {
+                    p.rect_filled(row, 0.0, Color32::from_rgba_unmultiplied(232, 194, 88, 60));
+                }
+                let bx = gfx::Rect::from_center_size(row.left_center() + gfx::vec2(fs * 0.45, 0.0), gfx::vec2(fs * 0.55, fs * 0.55));
+                p.rect_stroke(bx, 0.0, Stroke::new(gp, Color32::from_gray(200)));
+                if on {
+                    paint_icon(p, bx.center(), fs * 0.3, Icon::Check, Color32::WHITE);
+                }
+                paint_icon(p, row.left_center() + gfx::vec2(fs * 1.25, 0.0), fs * 0.3, *ic, if on { Color32::WHITE } else { GREYC });
+                self.mtext(p, row.left_center() + gfx::vec2(fs * 1.95, 0.0), gfx::Align2::LEFT_CENTER, if en { e_ } else { de }, small, if on { Color32::WHITE } else { Color32::from_gray(110) });
+                rows.push((row, k as u8));
+            }
+        }
+        self.gba.map.custom_rows = rows;
         // Fadenkreuz wie bei A Link to the Past: goldene Ecken, rastet auf dem gewählten Symbol ein
         {
             let lock = sel.and_then(|k| marks.iter().find(|mk| mk.1 == k)).map(|mk| mk.0);
@@ -1158,8 +1297,8 @@ impl App {
         }
         // Anzeige oben rechts (X wechselt)
         {
-            let names_de = ["ÜBERSICHT", "SAMMELN", "SCHNELLREISE", "ALLES"];
-            let names_en = ["OVERVIEW", "COLLECT", "FAST TRAVEL", "ALL"];
+            let names_de = ["ÜBERSICHT", "SAMMELN", "SCHNELLREISE", "ALLES", "EIGENE"];
+            let names_en = ["OVERVIEW", "COLLECT", "FAST TRAVEL", "ALL", "CUSTOM"];
             let view = if spoiler { tr(en, "ALLES", "ALL") } else { tr(en, "GESAMMELT", "COLLECTED") };
             let txt = if sp == 0 {
                 format!("Y  {}   X  {view}", if en { names_en[filt as usize] } else { names_de[filt as usize] })
@@ -1344,6 +1483,18 @@ impl App {
 
 /// eigene Markierungen und besuchte Räume laden (`<rom>.tmcpins`: „p Raum x y Symbol“, „v Gebiet Raum“)
 fn load_pins(rom: &std::path::Path) -> (Vec<(Space, f32, f32, u8)>, std::collections::BTreeSet<(u8, u8)>) {
+    let (p, v, _) = load_pins_all(rom);
+    (p, v)
+}
+
+/// wie `load_pins`, dazu die Auswahl „Eigene“ (Zeile „c Bits“)
+fn load_pins_all(rom: &std::path::Path) -> (Vec<(Space, f32, f32, u8)>, std::collections::BTreeSet<(u8, u8)>, Option<u16>) {
+    let custom = std::fs::read_to_string(rom.with_extension("tmcpins")).ok().and_then(|t| t.lines().find_map(|l| l.strip_prefix("c ").and_then(|v| v.trim().parse().ok())));
+    let (p, v) = load_pins_only(rom);
+    (p, v, custom)
+}
+
+fn load_pins_only(rom: &std::path::Path) -> (Vec<(Space, f32, f32, u8)>, std::collections::BTreeSet<(u8, u8)>) {
     let mut pins = Vec::new();
     let mut vis = std::collections::BTreeSet::new();
     let Ok(t) = std::fs::read_to_string(rom.with_extension("tmcpins")) else { return (pins, vis) };
@@ -1366,8 +1517,8 @@ fn load_pins(rom: &std::path::Path) -> (Vec<(Space, f32, f32, u8)>, std::collect
     (pins, vis)
 }
 
-fn save_pins(rom: &std::path::Path, pins: &[(Space, f32, f32, u8)], vis: &std::collections::BTreeSet<(u8, u8)>) {
-    let mut t = String::new();
+fn save_pins(rom: &std::path::Path, pins: &[(Space, f32, f32, u8)], vis: &std::collections::BTreeSet<(u8, u8)>, custom: u16) {
+    let mut t = format!("c {custom}\n");
     for (sp, x, y, sym) in pins {
         t += &format!("p {sp} {x:.0} {y:.0} {sym}\n");
     }
@@ -1383,6 +1534,10 @@ impl App {
         let sp = self.gba_map_space();
         let m = &mut self.gba.map;
         match m.sel {
+            Some(Sel::Travel(a, r)) if !m.visited.contains(&(a, r)) => {
+                let t = self.t("Dort warst du noch nicht", "You haven't been there yet").to_string();
+                self.msg(t);
+            }
             Some(Sel::Travel(a, r)) => {
                 if let Some((rr, _)) = m.rects.get(&(a, r)) {
                     m.travel = Some((a, r, rr[2] / 2, rr[3] / 2, 0, 0));
@@ -1393,6 +1548,25 @@ impl App {
                     let name = m.area_names.get(&a).cloned().unwrap_or_default();
                     let t = format!("{} {name}", self.t("Schnellreise:", "Fast travel:"));
                     self.msg(t);
+                }
+            }
+            Some(Sel::Door(i)) => {
+                let door = m.data.as_ref().and_then(|d| d.doors.get(i).copied());
+                if let Some(dr) = door {
+                    // nur aktivierte Reisepunkte (dort schon gewesen)
+                    if m.visited.contains(&(dr.area, dr.room)) {
+                        m.travel = Some((dr.area, dr.room, dr.ex, dr.ey, 0, 0));
+                        m.open = false;
+                        if let Some(d) = m.data.as_mut() {
+                            d.save();
+                        }
+                        let name = m.area_names.get(&dr.area).cloned().unwrap_or_default();
+                        let t = format!("{} {name}", self.t("Schnellreise:", "Fast travel:"));
+                        self.msg(t);
+                    } else {
+                        let t = self.t("Dort warst du noch nicht", "You haven't been there yet").to_string();
+                        self.msg(t);
+                    }
                 }
             }
             Some(Sel::Pin(i)) => {
@@ -1418,5 +1592,17 @@ impl App {
         if self.gba.map.open {
             self.gba_map_draw(area, ctx);
         }
+    }
+}
+
+impl MapUi {
+    /// 100-%-Cheat: alle Reisepunkte freischalten (jeder Raum und jedes Ziel einer Tür gilt als besucht)
+    pub fn visit_all(&mut self) {
+        let keys: Vec<(u8, u8)> = self.rects.keys().copied().collect();
+        self.visited.extend(keys);
+        if let Some(d) = &self.data {
+            self.visited.extend(d.doors.iter().map(|d| (d.area, d.room)));
+        }
+        self.pins_dirty = true;
     }
 }

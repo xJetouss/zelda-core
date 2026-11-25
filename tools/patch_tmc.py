@@ -357,3 +357,59 @@ patch('src/menu/pauseMenu.c', [
         if (iVar1 >= 0) {
             switch (bVar5 = gMenu.field_0xc[iVar1]) {'''),
 ])
+
+# Cheat „durch Wände gehen“ (Zelda Core): eigener Schalter, gilt auch im Konsolen-Treue-Modus
+patch('src/movement.c', [
+    ('''    if (this == &gPlayerEntity.base && Port_Debug_NoclipEnabled()) {
+        colResult = COL_NONE;
+    }''', '''#ifdef TMC_CORE_DLL
+    /* Zelda Core: Cheat „durch Wände gehen“ */
+    extern int gTmcCoreNoclip;
+    if (this == &gPlayerEntity.base && gTmcCoreNoclip) {
+        colResult = COL_NONE;
+    }
+#endif
+    if (this == &gPlayerEntity.base && Port_Debug_NoclipEnabled()) {
+        colResult = COL_NONE;
+    }'''),
+])
+
+# Cheat „durch Wände gehen“: Links eigene Bewegung ohne Wand-Prüfung und ohne Herausschieben aus Wänden
+patch('src/playerUtils.c', [
+    ('''void sub_08079E58(s32 speed, u32 direction) {
+    if ((gPlayerEntity.base.direction & 4) == 0) {''', '''void sub_08079E58(s32 speed, u32 direction) {
+#ifdef TMC_CORE_DLL
+    /* Zelda Core: Cheat „durch Wände gehen“ */
+    extern int gTmcCoreNoclip;
+    if (gTmcCoreNoclip) {
+        gPlayerEntity.base.collisions = 0;
+        LinearMoveDirectionOLD(&gPlayerEntity.base, (s16)speed, (u8)direction);
+        return;
+    }
+#endif
+    if ((gPlayerEntity.base.direction & 4) == 0) {'''),
+])
+
+# Cheat „durch Wände gehen“: auch beim normalen Gehen (UpdatePlayerMovement)
+patch('src/playerUtils.c', [
+    ('''        gPlayerEntity.base.speed = 0x20;
+    }
+    if ((gPlayerEntity.base.direction & 4) == 0) {
+        sub_08079E90(gPlayerEntity.base.direction);
+    }
+    sub_0800857C(&gPlayerEntity.base);''', '''        gPlayerEntity.base.speed = 0x20;
+    }
+#ifdef TMC_CORE_DLL
+    /* Zelda Core: Cheat „durch Wände gehen“ beim Gehen */
+    extern int gTmcCoreNoclip;
+    if (gTmcCoreNoclip) {
+        gPlayerEntity.base.collisions = 0;
+        LinearMoveDirectionOLD(&gPlayerEntity.base, gPlayerEntity.base.speed, gPlayerEntity.base.direction);
+        return;
+    }
+#endif
+    if ((gPlayerEntity.base.direction & 4) == 0) {
+        sub_08079E90(gPlayerEntity.base.direction);
+    }
+    sub_0800857C(&gPlayerEntity.base);'''),
+])

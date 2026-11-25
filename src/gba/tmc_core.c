@@ -385,6 +385,10 @@ EXPORT int tmc_debug(int what) {
             return (int)GetInventoryValue(ITEM_MAP);
         case 8:
             return gMain.task * 10000 + gMain.state * 100 + gMain.substate;
+        case 9: {
+            extern int gTmcCoreNoclip;
+            return gTmcCoreNoclip;
+        }
         default:
             return -2;
     }
@@ -807,4 +811,84 @@ EXPORT int tmc_room_marks(int* out, int cap) {
         }
     }
     return n / 3;
+}
+
+/* Cheats der Karte/Zelda Core: No-Clip (durch Wände gehen) und „100 %“ (alles, was in die 100 % zählt) */
+extern void Port_DebugAction_SetNoclip(int on);
+extern void Port_DebugAction_GiveAllItems(void);
+extern void Port_DebugAction_MaxHearts(void);
+extern void Port_DebugAction_AllKinstones(void);
+extern void Port_DebugAction_AllFigurines130(void);
+
+int gTmcCoreNoclip = 0;
+
+EXPORT void tmc_noclip(int on) {
+    gTmcCoreNoclip = on;
+    Port_DebugAction_SetNoclip(on);
+}
+
+EXPORT int tmc_cheat_complete(void) {
+    if (gMain.task != 2)
+        return 0;
+    Port_DebugAction_GiveAllItems();
+    Port_DebugAction_MaxHearts();
+    /* alle 20 Herzen, voll aufgefüllt (auch das letzte), keine angefangenen Herzteile */
+    gSave.stats.maxHealth = 160;
+    gSave.stats.health = 160;
+    gSave.stats.heartPieces = 0;
+    Port_DebugAction_AllKinstones();
+    Port_DebugAction_AllFigurines130();
+    for (int i = 0; i < 36; i++)
+        gSave.figurines[i] = 0xFF;
+    gSave.kinstones.fusedCount = 100;
+    gSave.stats.walletType = 3;
+    gSave.stats.bombBagType = 3;
+    gSave.stats.quiverType = 3;
+    static const int kQuest[] = { ITEM_EARTH_ELEMENT, ITEM_FIRE_ELEMENT, ITEM_WATER_ELEMENT, ITEM_WIND_ELEMENT,
+                                  ITEM_OCARINA, ITEM_FOURSWORD, ITEM_BOTTLE1, ITEM_BOTTLE2, ITEM_BOTTLE3, ITEM_BOTTLE4,
+                                  ITEM_SKILL_SPIN_ATTACK, ITEM_SKILL_ROLL_ATTACK, ITEM_SKILL_DASH_ATTACK,
+                                  ITEM_SKILL_ROCK_BREAKER, ITEM_SKILL_SWORD_BEAM, ITEM_SKILL_GREAT_SPIN,
+                                  ITEM_SKILL_DOWN_THRUST, ITEM_SKILL_PERIL_BEAM, ITEM_KINSTONE_BAG, ITEM_GRIP_RING,
+                                  ITEM_POWER_BRACELETS, ITEM_FLIPPERS, ITEM_QST_BOOK1, ITEM_QST_BOOK2, ITEM_QST_BOOK3,
+                                  ITEM_QST_TINGLE_TROPHY, ITEM_QST_CARLOV_MEDAL, ITEM_QST_LONLON_KEY,
+                                  ITEM_QST_GRAVEYARD_KEY, ITEM_LIGHT_ARROW, ITEM_MIRROR_SHIELD, ITEM_MAGIC_BOOMERANG };
+    for (unsigned i = 0; i < sizeof(kQuest) / sizeof(kQuest[0]); i++)
+        if (GetInventoryValue(kQuest[i]) == 0)
+            SetInventoryValue(kQuest[i], 1);
+    /* alle Fundorte der Logik als geholt markieren (Truhen, Herzteile, …) */
+    int n = 0;
+    if (RandoLogic_IsLoaded()) {
+        for (uint32_t i = 0; i < RandoLogic_GetLocationCountRaw(); i++) {
+            uint32_t key = RandoLogic_GetLocationKeyAt(i);
+            if (key == 0xFFFFFFFFu || (key & 0x80000000u))
+                continue;
+            uint32_t area = (key >> 16) & 0xFF, room = (key >> 8) & 0xFF, fc = key & 0xFF;
+            unsigned flag = Rando_GetChestLocalFlag(area, room, fc);
+            SetLocalFlagByBank(GetFlagBankOffset(area), flag != 0xFF ? flag : fc);
+            n++;
+        }
+    }
+    return n;
+}
+
+/* Ausgänge (Türen) des aktuellen Raums: je 7 Werte – Art, x, y (Welt), Zielgebiet, Zielraum, Ziel-x, Ziel-y (im Raum) */
+EXPORT int tmc_room_exits(int* out, int cap) {
+    if (gMain.task != 2 || gArea.pCurrentRoomInfo == NULL)
+        return 0;
+    const Transition* t = gArea.pCurrentRoomInfo->exits;
+    int n = 0;
+    for (int k = 0; t != NULL && k < 64 && t->warp_type != WARP_TYPE_END_OF_LIST; k++, t++) {
+        if (t->warp_type != WARP_TYPE_AREA && t->warp_type != WARP_TYPE_AREA2)
+            continue;
+        if (n + 7 > cap)
+            break;
+        out[n++] = t->warp_type;
+        out[n++] = gRoomControls.origin_x + t->startX;
+        out[n++] = gRoomControls.origin_y + t->startY;
+        out[n++] = t->area;
+        out[n++] = t->room;
+        out[n++] = t->endX;
+        out[n++] = t->endY;
+    }
+    return n / 7;
 }

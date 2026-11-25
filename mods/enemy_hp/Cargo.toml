@@ -1,6 +1,6 @@
 [package]
 name = "enemy_hp"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 description = "Zeigt über jedem Gegner, wie viel Leben er noch hat."
 

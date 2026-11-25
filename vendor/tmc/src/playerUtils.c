@@ -2600,6 +2600,15 @@ void UpdatePlayerMovement(void) {
         (gPlayerEntity.base.speed += gPlayerState.speed_modifier, gPlayerEntity.base.speed < 0x20)) {
         gPlayerEntity.base.speed = 0x20;
     }
+#ifdef TMC_CORE_DLL
+    /* Zelda Core: Cheat „durch Wände gehen“ beim Gehen */
+    extern int gTmcCoreNoclip;
+    if (gTmcCoreNoclip) {
+        gPlayerEntity.base.collisions = 0;
+        LinearMoveDirectionOLD(&gPlayerEntity.base, gPlayerEntity.base.speed, gPlayerEntity.base.direction);
+        return;
+    }
+#endif
     if ((gPlayerEntity.base.direction & 4) == 0) {
         sub_08079E90(gPlayerEntity.base.direction);
     }
@@ -2608,6 +2617,15 @@ void UpdatePlayerMovement(void) {
 }
 
 void sub_08079E58(s32 speed, u32 direction) {
+#ifdef TMC_CORE_DLL
+    /* Zelda Core: Cheat „durch Wände gehen“ */
+    extern int gTmcCoreNoclip;
+    if (gTmcCoreNoclip) {
+        gPlayerEntity.base.collisions = 0;
+        LinearMoveDirectionOLD(&gPlayerEntity.base, (s16)speed, (u8)direction);
+        return;
+    }
+#endif
     if ((gPlayerEntity.base.direction & 4) == 0) {
         sub_08079E90(direction);
     }

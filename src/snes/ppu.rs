@@ -360,6 +360,23 @@ pub fn refresh_area_cgram(id: u8, live: &[u16]) -> bool {
     false
 }
 
+/// Karte (Map16) eines gespeicherten Gebiets mit dem echten Spiel abgleichen: geöffnete Türen, geschnittenes Gras,
+/// gesprengte Wände stehen nur im Arbeitsspeicher – ohne Abgleich zeigte der Breitbildrand den alten Zustand.
+/// Gibt true zurück, wenn sich etwas geändert hat.
+pub fn refresh_area_m16(id: u8, live: &[u16]) -> bool {
+    let Ok(mut g) = AREAS.write() else { return false };
+    let Some(Some(a)) = g.get_mut((id & 0x7F) as usize) else { return false };
+    if a.m16.len() == live.len() && a.m16[..] != live[..] {
+        let mut b = (**a).clone_data();
+        b.m16.copy_from_slice(live);
+        *a = std::sync::Arc::new(b);
+        drop(g);
+        clear_seams();
+        return true;
+    }
+    false
+}
+
 impl AreaData {
     fn clone_data(&self) -> AreaData {
         AreaData { x0: self.x0, y0: self.y0, size: self.size, m16: self.m16.clone(), chr: self.chr.clone(), cgram: self.cgram.clone() }
