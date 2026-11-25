@@ -851,10 +851,13 @@ EXPORT int tmc_cheat_complete(void) {
                                   ITEM_SKILL_DOWN_THRUST, ITEM_SKILL_PERIL_BEAM, ITEM_KINSTONE_BAG, ITEM_GRIP_RING,
                                   ITEM_POWER_BRACELETS, ITEM_FLIPPERS, ITEM_QST_BOOK1, ITEM_QST_BOOK2, ITEM_QST_BOOK3,
                                   ITEM_QST_TINGLE_TROPHY, ITEM_QST_CARLOV_MEDAL, ITEM_QST_LONLON_KEY,
-                                  ITEM_QST_GRAVEYARD_KEY, ITEM_LIGHT_ARROW, ITEM_MIRROR_SHIELD, ITEM_MAGIC_BOOMERANG };
+                                  ITEM_QST_GRAVEYARD_KEY, ITEM_LIGHT_ARROW, ITEM_MIRROR_SHIELD, ITEM_MAGIC_BOOMERANG,
+                                  ITEM_BOMBS, ITEM_REMOTE_BOMBS, ITEM_BOW };
     for (unsigned i = 0; i < sizeof(kQuest) / sizeof(kQuest[0]); i++)
         if (GetInventoryValue(kQuest[i]) == 0)
             SetInventoryValue(kQuest[i], 1);
+    /* Herzteil an der Glocke (per Skript vergeben, nicht in den Fundort-Schlüsseln) */
+    SetLocalFlagByBank(GetFlagBankOffset(2), 0xd0);
     /* alle Fundorte der Logik als geholt markieren (Truhen, Herzteile, …) */
     int n = 0;
     if (RandoLogic_IsLoaded()) {

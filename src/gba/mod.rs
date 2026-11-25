@@ -2162,6 +2162,48 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
         g.set_noclip(false);
     }
 
+    /// Picori: 100-%-Cheat – was danach noch fehlt
+    #[test]
+    #[ignore]
+    fn dev_rc_complete() {
+        let (Ok(p), Ok(st)) = (std::env::var("PASTLINK_GBA_ROM"), std::env::var("GBA_RC_STATE")) else { return };
+        let mut g = Gba::load_with(Path::new(&p), true, false).unwrap();
+        while g.loading() {
+            g.run_frame(0);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let raw = lz4_flex::decompress_size_prepended(&std::fs::read(st).unwrap()).unwrap();
+        assert!(g.load_state(&raw));
+        for _ in 0..30 {
+            g.run_frame(0);
+        }
+        let locs = g.locations(super::tmcmap::LOGIC);
+        println!("vorher Items {:?} Fortschritt {:?}", g.owned_items().len(), g.progress());
+        println!("Cheat: {} Fundorte gesetzt", g.cheat_complete());
+        for _ in 0..30 {
+            g.run_frame(0);
+        }
+        println!("nachher Items {} {:?}", g.owned_items().len(), g.owned_items());
+        println!("Fortschritt {:?}", g.progress());
+        let (mut yes, mut no, mut unk) = (0, 0, 0);
+        for (n, key, ty) in &locs {
+            if !(*ty == 3 || (8..=13).contains(ty)) || n.contains("Dummy") || n.starts_with("Fake") || *key == u32::MAX {
+                continue;
+            }
+            match g.loc_done(*key) {
+                Some(true) => yes += 1,
+                Some(false) => {
+                    no += 1;
+                    if no <= 15 {
+                        println!("  fehlt: {n} {key:08x}");
+                    }
+                }
+                None => unk += 1,
+            }
+        }
+        println!("Fundorte: geholt {yes}, fehlt {no}, unbekannt {unk}");
+    }
+
     /// Picori: ganze Karte vorab erstellen (alle Räume), Dauer messen, Übersichtsbilder je Raum speichern
     #[test]
     #[ignore]

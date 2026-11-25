@@ -129,7 +129,53 @@ void ZeldaReadSram(void);
 void pl_z3_read_sram(void) { ZeldaReadSram(); }
 
 // Map16 -> 8x8-Kacheln aus der geladenen ROM (deutsche Fassung: andere Einträge als die US-Fassung, z. B. Wetterhahn)
+// (Entwicklung/Abgleich) die aktuell verwendete Map16-Tabelle auslesen
+size_t pl_z3_get_map16(uint16 *out, size_t count) {
+  size_t n = kMap16ToMap8_SIZE / 2;
+  if (count < n)
+    n = count;
+  memcpy(out, kMap16ToMap8, n * 2);
+  return n;
+}
+
+// Feste Map16-Nummern im Code von Zelda 3 stammen aus der US-Fassung. Die deutsche Tabelle ist in einem Bereich
+// verschoben (z. B. deutsch 0xDC9 = US 0xDC5): ohne Umrechnung zeigten geöffnete Türen und geschnittenes Gras falsche
+// Kacheln. Je US-Nummer die deutsche Nummer mit demselben Kachelinhalt.
+static uint16 g_m16_remap[4096];
+static uint16 *g_m16_us;
+static size_t g_m16_n;
+
+uint16 PlM16(uint16 v) {
+  return (v < 4096 && g_m16_remap[v]) ? g_m16_remap[v] - 1 : v;
+}
+
 void pl_z3_set_map16(const uint16 *table, size_t count) {
-  if (count * 2 <= kMap16ToMap8_SIZE)
-    memcpy((void *)kMap16ToMap8, table, count * 2);
+  size_t n = kMap16ToMap8_SIZE / 2;
+  if (count * 2 > kMap16ToMap8_SIZE)
+    return;
+  if (!g_m16_us) {
+    // Original (US) einmal sichern
+    g_m16_us = (uint16 *)malloc(n * 2);
+    memcpy(g_m16_us, kMap16ToMap8, n * 2);
+    g_m16_n = n;
+  }
+  memcpy((void *)kMap16ToMap8, table, count * 2);
+  memset(g_m16_remap, 0, sizeof(g_m16_remap));
+  size_t entries = count / 4;
+  for (size_t i = 0; i < entries && i < 4096 && i * 4 + 3 < g_m16_n; i++) {
+    const uint16 *u = g_m16_us + i * 4;
+    if (memcmp(u, table + i * 4, 8) == 0)
+      continue;
+    // nächstgelegenen Eintrag mit gleichem Inhalt suchen (erst in der Nähe, dann überall)
+    long best = -1;
+    for (long d = 1; d < (long)entries && best < 0; d++) {
+      for (int sgn = -1; sgn <= 1 && best < 0; sgn += 2) {
+        long j = (long)i + sgn * d;
+        if (j >= 0 && j < (long)entries && memcmp(u, table + j * 4, 8) == 0)
+          best = j;
+      }
+    }
+    if (best >= 0)
+      g_m16_remap[i] = (uint16)(best + 1);
+  }
 }

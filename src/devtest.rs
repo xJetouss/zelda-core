@@ -3203,3 +3203,30 @@ fn dev_state_z3() {
     shot(&b, "state_z3");
     println!("Zelda 3 aktiv: {} – {}", b.z3.active(), status(&b));
 }
+
+/// Map16-Tabelle: Zelda-3-Portierung (US) gegen die geladene ROM (DE) – welche Einträge weichen ab?
+#[test]
+#[ignore]
+#[cfg(pastlink_z3)]
+fn dev_map16_diff() {
+    let Ok(path) = std::env::var("PASTLINK_ROM") else { return };
+    let (rom, _) = crate::alttp::prepare_rom(std::fs::read(path).unwrap()).unwrap();
+    let us = crate::z3::map16_table();
+    let de: Vec<u16> = rom[0x78000..0x78000 + us.len() * 2].chunks_exact(2).map(|c| c[0] as u16 | (c[1] as u16) << 8).collect();
+    let diff: Vec<usize> = (0..us.len() / 4).filter(|&i| us[i * 4..i * 4 + 4] != de[i * 4..i * 4 + 4]).collect();
+    println!("Map16: {} Einträge, {} weichen ab", us.len() / 4, diff.len());
+    println!("abweichend: {:X?}", &diff[..diff.len().min(200)]);
+    // Bereiche zusammenfassen
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for &d in &diff {
+        match runs.last_mut() {
+            Some(r) if r.1 + 1 == d => r.1 = d,
+            _ => runs.push((d, d)),
+        }
+    }
+    println!("Bereiche: {}", runs.iter().map(|r| format!("{:X}-{:X}", r.0, r.1)).collect::<Vec<_>>().join(" "));
+    println!("Umrechnung: {:X?}", crate::z3::remap_check(&rom, &[0xda4, 0xda8, 0xdab, 0xdb4, 0xdc5, 0xdc7, 0xdc8, 0xdc9, 0xdcb, 0xe21, 0x918]));
+    for id in [0xda8usize, 0xdab, 0xdb6, 0xdc5, 0xdc6, 0xdc7, 0xdc8, 0xdc9, 0xdca, 0xdcb, 0xdcd, 0xdd3, 0x918] {
+        println!("  {id:X}: US {:04X?} DE {:04X?}", &us[id * 4..id * 4 + 4], &de[id * 4..id * 4 + 4]);
+    }
+}

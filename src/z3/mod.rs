@@ -27,6 +27,8 @@ pub mod ffi {
         pub fn pl_z3_export_apu(ram: *mut u8, dsp_regs: *mut u8, ports_to_spc: *mut u8);
         pub fn pl_z3_transfer_font();
         pub fn pl_z3_set_map16(table: *const u16, count: usize);
+        pub fn pl_z3_get_map16(out: *mut u16, count: usize) -> usize;
+        pub fn PlM16(v: u16) -> u16;
     }
 }
 
@@ -701,4 +703,26 @@ mod layout_probe {
             std::fs::write(&out, b).unwrap();
         }
     }
+}
+
+/// (Entwicklung) Map16-Tabelle der Zelda-3-Portierung auslesen
+#[cfg(pastlink_z3)]
+pub fn map16_table() -> Vec<u16> {
+    if !run::init() {
+        return Vec::new();
+    }
+    let mut v = vec![0u16; 3752 * 4];
+    let n = unsafe { ffi::pl_z3_get_map16(v.as_mut_ptr(), v.len()) };
+    v.truncate(n);
+    v
+}
+
+/// (Entwicklung) deutsche Tabelle setzen und die Umrechnung fester US-Nummern abfragen
+#[cfg(pastlink_z3)]
+pub fn remap_check(rom: &[u8], ids: &[u16]) -> Vec<(u16, u16)> {
+    if !run::init() {
+        return Vec::new();
+    }
+    run::set_map16(rom);
+    ids.iter().map(|&i| (i, unsafe { ffi::PlM16(i) })).collect()
 }

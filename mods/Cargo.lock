@@ -20,7 +20,7 @@ version = "0.3.0"
 
 [[package]]
 name = "enemy_hp"
-version = "0.3.1"
+version = "0.3.2"
 
 [[package]]
 name = "full_supply"

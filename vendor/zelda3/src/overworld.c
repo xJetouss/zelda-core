@@ -172,6 +172,9 @@ static const int16 kOverworld_Func6B_Tab2[4] = { 27, 27, 30, 30 };
 static const int16 kOverworld_Func6B_Tab3[4] = { -0x70, 0x70, -0x70, 0x70 };
 static const int16 kOverworld_Func6B_AreaDelta[4] = { -8, 8, -1, 1 };
 static const uint8 kOverworld_Func8_tab[4] = { 0xe0, 8, 0xe0, 0x10 };
+/* pastlink: feste Map16-Nummern der US-Fassung auf die geladene (deutsche) Tabelle umrechnen (glue.c) */
+uint16 PlM16(uint16 v);
+
 static const uint16 kDoorAnimTiles[56] = {
   0xda8, 0xda9, 0xdaa, 0xdab,
   0xdac, 0xdad, 0xdae, 0xdaf,
@@ -1029,19 +1032,19 @@ void Overworld_DoMapUpdate32x32() {  // 82ad85
   uint16 pos, tile;
 
   memorized_tile_addr[i] = pos = big_rock_starting_address;
-  memorized_tile_value[i] = tile = kDoorAnimTiles[j + 0];
+  memorized_tile_value[i] = tile = PlM16(kDoorAnimTiles[j + 0]);
   Overworld_DrawMap16_Persist(pos, tile);
 
   memorized_tile_addr[i + 1] = pos = big_rock_starting_address + 2;
-  memorized_tile_value[i + 1] = tile = kDoorAnimTiles[j + 1];
+  memorized_tile_value[i + 1] = tile = PlM16(kDoorAnimTiles[j + 1]);
   Overworld_DrawMap16_Persist(pos, tile);
 
   memorized_tile_addr[i + 2] = pos = big_rock_starting_address + 0x80;
-  memorized_tile_value[i + 2] = tile = kDoorAnimTiles[j + 2];
+  memorized_tile_value[i + 2] = tile = PlM16(kDoorAnimTiles[j + 2]);
   Overworld_DrawMap16_Persist(pos, tile);
 
   memorized_tile_addr[i + 3] = pos = big_rock_starting_address + 0x82;
-  memorized_tile_value[i + 3] = tile = kDoorAnimTiles[j + 3];
+  memorized_tile_value[i + 3] = tile = PlM16(kDoorAnimTiles[j + 3]);
   Overworld_DrawMap16_Persist(pos, tile);
   vram_upload_data[vram_upload_offset >> 1] = 0xffff;
   num_memorized_tiles += 8;
@@ -2725,7 +2728,7 @@ getout:
 }
 
 void Overworld_Memorize_Map16_Change(uint16 pos, uint16 value) {  // 8edd40
-  if (value == 0xdc5 || value == 0xdc9)
+  if (value == PlM16(0xdc5) || value == PlM16(0xdc9))
     return;
 
   int x = num_memorized_tiles;
@@ -3235,8 +3238,8 @@ void Overworld_UseEntrance() {  // 9bbbf4
     if (a == 0x40e9) {
       pos -= 2;
 do_draw:
-      Overworld_DrawMap16_Persist(pos + 0, 0xDA4);
-      Overworld_DrawMap16_Persist(pos + 2, 0xDA6);
+      Overworld_DrawMap16_Persist(pos + 0, PlM16(0xDA4));
+      Overworld_DrawMap16_Persist(pos + 2, PlM16(0xDA6));
       sound_effect_2 = 21;
       nmi_load_bg_from_vram = 1;
       return;
@@ -3302,7 +3305,7 @@ uint16 Overworld_ToolAndTileInteraction(uint16 x, uint16 y) {  // 9bbd82
           return attr;
         if (overworld_screen_index == 0x2a && pos == 0x492)
           word_7E04B2 = pos;
-        yv = 0xdc9;
+        yv = PlM16(0xdc9);
         goto check_secret;
       } else if (attr == 0x37e) {  // isThickGrass
         if (link_position_mode == 1)
@@ -3310,7 +3313,7 @@ uint16 Overworld_ToolAndTileInteraction(uint16 x, uint16 y) {  // 9bbd82
         scratch_0 = x * 8 - 8;
         scratch_1 = (y - 8) & ~7;
         index_of_interacting_tile = 3;
-        yv = 0xdc5;
+        yv = PlM16(0xdc5);
         goto check_secret;
       }
     }
@@ -3346,7 +3349,7 @@ memoize_getout:
     if (attr == 0x21b) {
       sound_effect_1 = 17;
       HandlePegPuzzles(pos);
-      yv = 0xdcb;
+      yv = PlM16(0xdcb);
       goto memoize_getout;
     } else { // else_3
       Overworld_PickHammerSfx(attr);
@@ -3390,7 +3393,7 @@ uint8 Overworld_HandleLiftableTiles(Point16U *pt_arg) {  // 9bbf9d
   if ((y = 0, a == 0x36d) || (y = 1, a == 0x36e) || (y = 2, a == 0x374) || (y = 3, a == 0x375) ||
       (y = 0, a == 0x23b) || (y = 1, a == 0x23c) || (y = 2, a == 0x23d) || (y = 3, a == 0x23e)) {
     return SmashRockPile_fromLift(a, pos, y, pt);
-  } else if ((y = 0xdc7, a == 0x36) || (y = 0xdc8, a == 0x72a) || (y = 0xdca, a == 0x20f) || (y = 0xdca, a == 0x239) || (y = 0xdc6, a == 0x101)) {
+  } else if ((y = PlM16(0xdc7), a == 0x36) || (y = PlM16(0xdc8), a == 0x72a) || (y = PlM16(0xdca), a == 0x20f) || (y = PlM16(0xdca), a == 0x239) || (y = PlM16(0xdc6), a == 0x101)) {
     return Overworld_LiftingSmallObj(a, pos, y, pt);
   } else {
     uint16 t = a * 4 + (pt.x & 8 ? 2 : 0) + (pt.y & 8 ? 1 : 0);
@@ -3479,11 +3482,11 @@ void Overworld_BombTile(int x, int y) {  // 9bc155
   a = dung_bg2[pos >> 1];
 
   if (a == 0x36) {
-    k = 2, j = 0xdc7;
+    k = 2, j = PlM16(0xdc7);
   } else if (a == 0x72a) {
-    k = 4, j = 0xdc8;
+    k = 4, j = PlM16(0xdc8);
   } else if (a == 0x37e) {
-    k = 3, j = 0xdc5;
+    k = 3, j = PlM16(0xdc5);
   } else {
     goto label_a;
   }
@@ -3500,14 +3503,14 @@ void Overworld_BombTile(int x, int y) {  // 9bc155
 
 label_a:
   a = Overworld_RevealSecret(pos);
-  if (a == 0xdb4) {
+  if (a == PlM16(0xdb4)) {
     dung_bg2[pos >> 1] = a;
     Overworld_Memorize_Map16_Change(pos, a);
     Overworld_DrawMap16(pos, a);
 
     dung_bg2[(pos >> 1) + 1] = 0xDB5;
     Overworld_Memorize_Map16_Change(pos, 0xDB5);  // wtf
-    Overworld_DrawMap16(pos + 2, 0xDB5);
+    Overworld_DrawMap16(pos + 2, PlM16(0xDB5));
     nmi_load_bg_from_vram = 1;
     save_ow_event_info[overworld_screen_index] |= 2;
   }
@@ -3517,35 +3520,35 @@ void Overworld_AlterWeathervane() {  // 9bc21d
   door_open_closed_counter = 0x68;
   big_rock_starting_address = 0xc3e;
   Overworld_DoMapUpdate32x32_B();
-  Overworld_DrawMap16_Persist(0xc42, 0xe21);
-  Overworld_DrawMap16_Persist(0xcc2, 0xe25);
+  Overworld_DrawMap16_Persist(0xc42, PlM16(0xe21));
+  Overworld_DrawMap16_Persist(0xcc2, PlM16(0xe25));
 
   save_ow_event_info[0x18] |= 0x20;
   nmi_load_bg_from_vram = 1;
 }
 
 void OpenGargoylesDomain() {  // 9bc264
-  Overworld_DrawMap16_Persist(0xd3e, 0xe1b);
-  Overworld_DrawMap16_Persist(0xd40, 0xe1c);
-  Overworld_DrawMap16_Persist(0xdbe, 0xe1d);
-  Overworld_DrawMap16_Persist(0xdc0, 0xe1e);
-  Overworld_DrawMap16_Persist(0xe3e, 0xe1f);
-  Overworld_DrawMap16_Persist(0xe40, 0xe20);
+  Overworld_DrawMap16_Persist(0xd3e, PlM16(0xe1b));
+  Overworld_DrawMap16_Persist(0xd40, PlM16(0xe1c));
+  Overworld_DrawMap16_Persist(0xdbe, PlM16(0xe1d));
+  Overworld_DrawMap16_Persist(0xdc0, PlM16(0xe1e));
+  Overworld_DrawMap16_Persist(0xe3e, PlM16(0xe1f));
+  Overworld_DrawMap16_Persist(0xe40, PlM16(0xe20));
   save_ow_event_info[0x58] |= 0x20;
   sound_effect_2 = 0x1b;
   nmi_load_bg_from_vram = 1;
 }
 
 void CreatePyramidHole() {  // 9bc2a7
-  Overworld_DrawMap16_Persist(0x3bc, 0xe3f);
-  Overworld_DrawMap16_Persist(0x3be, 0xe40);
-  Overworld_DrawMap16_Persist(0x3c0, 0xe41);
-  Overworld_DrawMap16_Persist(0x43c, 0xe42);
-  Overworld_DrawMap16_Persist(0x43e, 0xe43);
-  Overworld_DrawMap16_Persist(0x440, 0xe44);
-  Overworld_DrawMap16_Persist(0x4bc, 0xe45);
-  Overworld_DrawMap16_Persist(0x4be, 0xe46);
-  Overworld_DrawMap16_Persist(0x4c0, 0xe47);
+  Overworld_DrawMap16_Persist(0x3bc, PlM16(0xe3f));
+  Overworld_DrawMap16_Persist(0x3be, PlM16(0xe40));
+  Overworld_DrawMap16_Persist(0x3c0, PlM16(0xe41));
+  Overworld_DrawMap16_Persist(0x43c, PlM16(0xe42));
+  Overworld_DrawMap16_Persist(0x43e, PlM16(0xe43));
+  Overworld_DrawMap16_Persist(0x440, PlM16(0xe44));
+  Overworld_DrawMap16_Persist(0x4bc, PlM16(0xe45));
+  Overworld_DrawMap16_Persist(0x4be, PlM16(0xe46));
+  Overworld_DrawMap16_Persist(0x4c0, PlM16(0xe47));
   WORD(sound_effect_ambient) = 0x3515;
   save_ow_event_info[0x5b] |= 0x20;
   sound_effect_2 = 3;
@@ -3590,7 +3593,10 @@ fail:
   }
   static const uint16 kTileBelow[4] = { 0xDCC, 0x212, 0xFFFF, 0xDB4 };
   AdjustSecretForPowder();
-  return kTileBelow[(data & 0xf) >> 1];
+  {
+    uint16 t = kTileBelow[(data & 0xf) >> 1];
+    return (t == 0xFFFF || t < 0x900) ? t : PlM16(t);
+  }
 
 }
 
@@ -3656,36 +3662,36 @@ void Overworld_AnimateEntrance_PoD() {  // 9bcade
       return;
     OverworldEntrance_AdvanceAndBoom();
     save_ow_event_info[0x5e] |= 0x20;
-    Overworld_DrawMap16_Persist(0x1e6, 0xe31);
-    Overworld_DrawMap16_Persist(0x2ea, 0xe30);
-    Overworld_DrawMap16_Persist(0x26a, 0xe26);
-    Overworld_DrawMap16_Persist(0x2ea, 0xe27);
+    Overworld_DrawMap16_Persist(0x1e6, PlM16(0xe31));
+    Overworld_DrawMap16_Persist(0x2ea, PlM16(0xe30));
+    Overworld_DrawMap16_Persist(0x26a, PlM16(0xe26));
+    Overworld_DrawMap16_Persist(0x2ea, PlM16(0xe27));
     nmi_load_bg_from_vram = 1;
     break;
   case 1:
     if (++overworld_entrance_sequence_counter != 0x20)
       return;
     OverworldEntrance_AdvanceAndBoom();
-    Overworld_DrawMap16_Persist(0x26a, 0xe28);
-    Overworld_DrawMap16_Persist(0x2ea, 0xe29);
+    Overworld_DrawMap16_Persist(0x26a, PlM16(0xe28));
+    Overworld_DrawMap16_Persist(0x2ea, PlM16(0xe29));
     nmi_load_bg_from_vram = 1;
     break;
   case 2:
     if (++overworld_entrance_sequence_counter != 0x20)
       return;
     OverworldEntrance_AdvanceAndBoom();
-    Overworld_DrawMap16_Persist(0x26a, 0xe2a);
-    Overworld_DrawMap16_Persist(0x2ea, 0xe2b);
-    Overworld_DrawMap16_Persist(0x36a, 0xe2c);
+    Overworld_DrawMap16_Persist(0x26a, PlM16(0xe2a));
+    Overworld_DrawMap16_Persist(0x2ea, PlM16(0xe2b));
+    Overworld_DrawMap16_Persist(0x36a, PlM16(0xe2c));
     nmi_load_bg_from_vram = 1;
     break;
   case 3:
     if (++overworld_entrance_sequence_counter != 0x20)
       return;
     OverworldEntrance_AdvanceAndBoom();
-    Overworld_DrawMap16_Persist(0x26a, 0xe2d);
-    Overworld_DrawMap16_Persist(0x2ea, 0xe2e);
-    Overworld_DrawMap16_Persist(0x36a, 0xe2f);
+    Overworld_DrawMap16_Persist(0x26a, PlM16(0xe2d));
+    Overworld_DrawMap16_Persist(0x2ea, PlM16(0xe2e));
+    Overworld_DrawMap16_Persist(0x36a, PlM16(0xe2f));
     nmi_load_bg_from_vram = 1;
     break;
   case 4:
@@ -3704,8 +3710,8 @@ void Overworld_AnimateEntrance_Skull() {  // 9bcba6
       return;
     overworld_entrance_sequence_counter = 0;
     subsubmodule_index++;
-    Overworld_DrawMap16_Persist(0x409 * 2, 0xe06);
-    Overworld_DrawMap16_Persist(0x40a * 2, 0xe06);
+    Overworld_DrawMap16_Persist(0x409 * 2, PlM16(0xe06));
+    Overworld_DrawMap16_Persist(0x40a * 2, PlM16(0xe06));
     save_ow_event_info[BYTE(overworld_screen_index)] |= 0x20;
     nmi_load_bg_from_vram = 1;
     sound_effect_2 = 0x16;
@@ -3715,10 +3721,10 @@ void Overworld_AnimateEntrance_Skull() {  // 9bcba6
       return;
     overworld_entrance_sequence_counter = 0;
     subsubmodule_index++;
-    Overworld_DrawMap16_Persist(0x3c8 * 2, 0xe07);
-    Overworld_DrawMap16_Persist(0x3c9 * 2, 0xe08);
-    Overworld_DrawMap16_Persist(0x3ca * 2, 0xe09);
-    Overworld_DrawMap16_Persist(0x3cb * 2, 0xe0a);
+    Overworld_DrawMap16_Persist(0x3c8 * 2, PlM16(0xe07));
+    Overworld_DrawMap16_Persist(0x3c9 * 2, PlM16(0xe08));
+    Overworld_DrawMap16_Persist(0x3ca * 2, PlM16(0xe09));
+    Overworld_DrawMap16_Persist(0x3cb * 2, PlM16(0xe0a));
     nmi_load_bg_from_vram = 1;
     sound_effect_2 = 0x16;
     break;
@@ -3727,10 +3733,10 @@ void Overworld_AnimateEntrance_Skull() {  // 9bcba6
       return;
     overworld_entrance_sequence_counter = 0;
     subsubmodule_index++;
-    Overworld_DrawMap16_Persist(0x388 * 2, 0xe07);
-    Overworld_DrawMap16_Persist(0x389 * 2, 0xe08);
-    Overworld_DrawMap16_Persist(0x38a * 2, 0xe09);
-    Overworld_DrawMap16_Persist(0x38b * 2, 0xe0a);
+    Overworld_DrawMap16_Persist(0x388 * 2, PlM16(0xe07));
+    Overworld_DrawMap16_Persist(0x389 * 2, PlM16(0xe08));
+    Overworld_DrawMap16_Persist(0x38a * 2, PlM16(0xe09));
+    Overworld_DrawMap16_Persist(0x38b * 2, PlM16(0xe0a));
     nmi_load_bg_from_vram = 1;
     sound_effect_2 = 0x16;
     break;
@@ -3739,14 +3745,14 @@ void Overworld_AnimateEntrance_Skull() {  // 9bcba6
       return;
     overworld_entrance_sequence_counter = 0;
     subsubmodule_index++;
-    Overworld_DrawMap16_Persist(0x2c8 * 2, 0xe11);
-    Overworld_DrawMap16_Persist(0x2cb * 2, 0xe12);
-    Overworld_DrawMap16_Persist(0x308 * 2, 0xe0d);
-    Overworld_DrawMap16_Persist(0x309 * 2, 0xe0e);
-    Overworld_DrawMap16_Persist(0x30a * 2, 0xe0f);
-    Overworld_DrawMap16_Persist(0x30b * 2, 0xe10);
-    Overworld_DrawMap16_Persist(0x349 * 2, 0xe0b);
-    Overworld_DrawMap16_Persist(0x34a * 2, 0xe0c);
+    Overworld_DrawMap16_Persist(0x2c8 * 2, PlM16(0xe11));
+    Overworld_DrawMap16_Persist(0x2cb * 2, PlM16(0xe12));
+    Overworld_DrawMap16_Persist(0x308 * 2, PlM16(0xe0d));
+    Overworld_DrawMap16_Persist(0x309 * 2, PlM16(0xe0e));
+    Overworld_DrawMap16_Persist(0x30a * 2, PlM16(0xe0f));
+    Overworld_DrawMap16_Persist(0x30b * 2, PlM16(0xe10));
+    Overworld_DrawMap16_Persist(0x349 * 2, PlM16(0xe0b));
+    Overworld_DrawMap16_Persist(0x34a * 2, PlM16(0xe0c));
     nmi_load_bg_from_vram = 1;
     sound_effect_2 = 0x16;
     break;
@@ -3755,14 +3761,14 @@ void Overworld_AnimateEntrance_Skull() {  // 9bcba6
       return;
     overworld_entrance_sequence_counter = 0;
     subsubmodule_index++;
-    Overworld_DrawMap16_Persist(0x2c8 * 2, 0xe13);
-    Overworld_DrawMap16_Persist(0x2cb * 2, 0xe14);
-    Overworld_DrawMap16_Persist(0x308 * 2, 0xe15);
-    Overworld_DrawMap16_Persist(0x309 * 2, 0xe16);
-    Overworld_DrawMap16_Persist(0x30a * 2, 0xe17);
-    Overworld_DrawMap16_Persist(0x30b * 2, 0xe18);
-    Overworld_DrawMap16_Persist(0x349 * 2, 0xe19);
-    Overworld_DrawMap16_Persist(0x34a * 2, 0xe1a);
+    Overworld_DrawMap16_Persist(0x2c8 * 2, PlM16(0xe13));
+    Overworld_DrawMap16_Persist(0x2cb * 2, PlM16(0xe14));
+    Overworld_DrawMap16_Persist(0x308 * 2, PlM16(0xe15));
+    Overworld_DrawMap16_Persist(0x309 * 2, PlM16(0xe16));
+    Overworld_DrawMap16_Persist(0x30a * 2, PlM16(0xe17));
+    Overworld_DrawMap16_Persist(0x30b * 2, PlM16(0xe18));
+    Overworld_DrawMap16_Persist(0x349 * 2, PlM16(0xe19));
+    Overworld_DrawMap16_Persist(0x34a * 2, PlM16(0xe1a));
     nmi_load_bg_from_vram = 1;
     sound_effect_2 = 0x16;
     OverworldEntrance_PlayJingle();
@@ -3799,7 +3805,7 @@ void Overworld_AnimateEntrance_Mire() {  // 9bccd4
       break;
     OverworldEntrance_AdvanceAndBoom();
     save_ow_event_info[BYTE(overworld_screen_index)] |= 0x20;
-    j = 0xe48;
+    j = PlM16(0xe48);
 draw_misery_2:
     Overworld_DrawMap16_Persist(0x622, j++);
     Overworld_DrawMap16_Persist(0x624, j++);
@@ -3819,7 +3825,7 @@ draw_misery_2:
     if ((j = ++overworld_entrance_sequence_counter) != 72)
       break;
     OverworldEntrance_AdvanceAndBoom();
-    j = 0xe54;
+    j = PlM16(0xe54);
 draw_misery_3:
     Overworld_DrawMap16_Persist(0x5a2, j++);
     Overworld_DrawMap16_Persist(0x5a4, j++);
@@ -3830,7 +3836,7 @@ draw_misery_3:
     if ((j = ++overworld_entrance_sequence_counter) != 80)
       break;
     OverworldEntrance_AdvanceAndBoom();
-    j = 0xe64;
+    j = PlM16(0xe64);
     Overworld_DrawMap16_Persist(0x522, j++);
     Overworld_DrawMap16_Persist(0x524, j++);
     Overworld_DrawMap16_Persist(0x526, j++);
@@ -3939,7 +3945,7 @@ void OverworldEntrance_PlayJingle() {  // 9bcf40
 }
 
 void OverworldEntrance_DrawManyTR() {  // 9bcf60
-  int j = 0xe78;
+  int j = PlM16(0xe78);
   Overworld_DrawMap16_Persist(0x99e, j++);
   Overworld_DrawMap16_Persist(0x9a0, j++);
   Overworld_DrawMap16_Persist(0x9a2, j++);
@@ -3986,82 +3992,82 @@ void Overworld_AnimateEntrance_GanonsTower() {  // 9bcfd9
     if (++ganonentrance_ctr != 48)
       return;
     OverworldEntrance_AdvanceAndBoom();
-    Overworld_DrawMap16_Persist(0x45e, 0xe88);
-    Overworld_DrawMap16_Persist(0x460, 0xe89);
-    Overworld_DrawMap16_Persist(0x4de, 0xea2);
-    Overworld_DrawMap16_Persist(0x4e0, 0xea3);
-    Overworld_DrawMap16_Persist(0x55e, 0xe8a);
-    Overworld_DrawMap16_Persist(0x560, 0xe8b);
+    Overworld_DrawMap16_Persist(0x45e, PlM16(0xe88));
+    Overworld_DrawMap16_Persist(0x460, PlM16(0xe89));
+    Overworld_DrawMap16_Persist(0x4de, PlM16(0xea2));
+    Overworld_DrawMap16_Persist(0x4e0, PlM16(0xea3));
+    Overworld_DrawMap16_Persist(0x55e, PlM16(0xe8a));
+    Overworld_DrawMap16_Persist(0x560, PlM16(0xe8b));
     nmi_load_bg_from_vram = 1;
     break;
   case 4:
     if (++ganonentrance_ctr != 48)
       return;
     OverworldEntrance_AdvanceAndBoom();
-    Overworld_DrawMap16_Persist(0x45e, 0xe8c);
-    Overworld_DrawMap16_Persist(0x460, 0xe8d);
-    Overworld_DrawMap16_Persist(0x4de, 0xe8e);
-    Overworld_DrawMap16_Persist(0x4e0, 0xe8f);
-    Overworld_DrawMap16_Persist(0x55e, 0xe90);
-    Overworld_DrawMap16_Persist(0x560, 0xe91);
+    Overworld_DrawMap16_Persist(0x45e, PlM16(0xe8c));
+    Overworld_DrawMap16_Persist(0x460, PlM16(0xe8d));
+    Overworld_DrawMap16_Persist(0x4de, PlM16(0xe8e));
+    Overworld_DrawMap16_Persist(0x4e0, PlM16(0xe8f));
+    Overworld_DrawMap16_Persist(0x55e, PlM16(0xe90));
+    Overworld_DrawMap16_Persist(0x560, PlM16(0xe91));
     nmi_load_bg_from_vram = 1;
     break;
   case 5:
     if (++ganonentrance_ctr != 52)
       return;
     OverworldEntrance_AdvanceAndBoom();
-    Overworld_DrawMap16_Persist(0x45e, 0xe92);
-    Overworld_DrawMap16_Persist(0x460, 0xe93);
-    Overworld_DrawMap16_Persist(0x4de, 0xe94);
-    Overworld_DrawMap16_Persist(0x4e0, 0xe94);
-    Overworld_DrawMap16_Persist(0x55e, 0xe95);
-    Overworld_DrawMap16_Persist(0x560, 0xe95);
+    Overworld_DrawMap16_Persist(0x45e, PlM16(0xe92));
+    Overworld_DrawMap16_Persist(0x460, PlM16(0xe93));
+    Overworld_DrawMap16_Persist(0x4de, PlM16(0xe94));
+    Overworld_DrawMap16_Persist(0x4e0, PlM16(0xe94));
+    Overworld_DrawMap16_Persist(0x55e, PlM16(0xe95));
+    Overworld_DrawMap16_Persist(0x560, PlM16(0xe95));
     nmi_load_bg_from_vram = 1;
     break;
   case 6:
     if (++ganonentrance_ctr != 32)
       return;
     OverworldEntrance_AdvanceAndBoom();
-    Overworld_DrawMap16_Persist(0x45e, 0xe96);
-    Overworld_DrawMap16_Persist(0x460, 0xe97);
-    Overworld_DrawMap16_Persist(0x4de, 0xe98);
-    Overworld_DrawMap16_Persist(0x4e0, 0xe99);
+    Overworld_DrawMap16_Persist(0x45e, PlM16(0xe96));
+    Overworld_DrawMap16_Persist(0x460, PlM16(0xe97));
+    Overworld_DrawMap16_Persist(0x4de, PlM16(0xe98));
+    Overworld_DrawMap16_Persist(0x4e0, PlM16(0xe99));
     nmi_load_bg_from_vram = 1;
     break;
   case 7:
     if (++ganonentrance_ctr != 32)
       return;
     OverworldEntrance_AdvanceAndBoom();
-    Overworld_DrawMap16_Persist(0x4de, 0xe9a);
-    Overworld_DrawMap16_Persist(0x4e0, 0xe9b);
+    Overworld_DrawMap16_Persist(0x4de, PlM16(0xe9a));
+    Overworld_DrawMap16_Persist(0x4e0, PlM16(0xe9b));
     nmi_load_bg_from_vram = 1;
     break;
   case 8:
     if (++ganonentrance_ctr != 32)
       return;
     OverworldEntrance_AdvanceAndBoom();
-    Overworld_DrawMap16_Persist(0x4de, 0xe9c);
-    Overworld_DrawMap16_Persist(0x4e0, 0xe9d);
-    Overworld_DrawMap16_Persist(0x55e, 0xe9e);
-    Overworld_DrawMap16_Persist(0x560, 0xe9f);
+    Overworld_DrawMap16_Persist(0x4de, PlM16(0xe9c));
+    Overworld_DrawMap16_Persist(0x4e0, PlM16(0xe9d));
+    Overworld_DrawMap16_Persist(0x55e, PlM16(0xe9e));
+    Overworld_DrawMap16_Persist(0x560, PlM16(0xe9f));
     nmi_load_bg_from_vram = 1;
     break;
   case 9:
     if (++ganonentrance_ctr != 32)
       return;
     OverworldEntrance_AdvanceAndBoom();
-    Overworld_DrawMap16_Persist(0x55e, 0xe9a);
-    Overworld_DrawMap16_Persist(0x560, 0xe9b);
+    Overworld_DrawMap16_Persist(0x55e, PlM16(0xe9a));
+    Overworld_DrawMap16_Persist(0x560, PlM16(0xe9b));
     nmi_load_bg_from_vram = 1;
     break;
   case 10:
     if (++ganonentrance_ctr != 32)
       return;
     OverworldEntrance_AdvanceAndBoom();
-    Overworld_DrawMap16_Persist(0x55e, 0xe9c);
-    Overworld_DrawMap16_Persist(0x560, 0xe9d);
-    Overworld_DrawMap16_Persist(0x5de, 0xea0);
-    Overworld_DrawMap16_Persist(0x5e0, 0xea1);
+    Overworld_DrawMap16_Persist(0x55e, PlM16(0xe9c));
+    Overworld_DrawMap16_Persist(0x560, PlM16(0xe9d));
+    Overworld_DrawMap16_Persist(0x5de, PlM16(0xea0));
+    Overworld_DrawMap16_Persist(0x5e0, PlM16(0xea1));
     nmi_load_bg_from_vram = 1;
     break;
   case 11:
@@ -4069,8 +4075,8 @@ void Overworld_AnimateEntrance_GanonsTower() {  // 9bcfd9
       return;
     sound_effect_ambient = 5;
     OverworldEntrance_AdvanceAndBoom();
-    Overworld_DrawMap16_Persist(0x5de, 0xe9a);
-    Overworld_DrawMap16_Persist(0x5e0, 0xe9b);
+    Overworld_DrawMap16_Persist(0x5de, PlM16(0xe9a));
+    Overworld_DrawMap16_Persist(0x5e0, PlM16(0xe9b));
     nmi_load_bg_from_vram = 1;
     break;
   case 12:

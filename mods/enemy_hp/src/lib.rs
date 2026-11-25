@@ -38,6 +38,10 @@ extern "C" fn post(api: *const Api) {
         if state != 0x09 || hp == 0 || hp == 0xFF {
             continue;
         }
+        // angehalten (außerhalb des Bildes), vom Spiel ausgeblendet oder ohne gezeichnete Figur: kein Balken
+        if g.read8(0x7E0F00 + i) != 0 || g.read8(0x7E0BA0 + i) != 0 || g.read8(0x7E0E40 + i) & 0x1F == 0 {
+            continue;
+        }
         let m = &mut max[i as usize].1;
         *m = (*m).max(hp);
         let x = (g.read8(0x7E0D10 + i) as u16 | (g.read8(0x7E0D30 + i) as u16) << 8).wrapping_sub(cam.0) as i16 as i32;
