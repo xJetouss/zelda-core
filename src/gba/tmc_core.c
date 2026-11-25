@@ -438,14 +438,21 @@ EXPORT const uint32_t* tmc_render_bg(int* w, int* h) {
     sCapture = 1;
     gTmcCoreNoObj = 1;
     gTmcCoreLayers = 0x0E; /* ohne BG0 (Anzeige, Texte); Hintergrundfarbe wird Magenta = nicht übernehmen */
+    /* dunkle Räume (Königliches Tal, Höhlen): BG3 ist dort die Abdunkel-Schicht – für die Karte weglassen */
+    if (gArea.lightType != 0)
+        gTmcCoreLayers = 0x06;
     /* Aufhellen/Abdunkeln (Überblendungen, Intro) nicht mit aufnehmen; Transparenz bleibt */
     const u8 bld = gIoMem[0x50];
     if (((bld >> 6) & 3) >= 2)
         gIoMem[0x50] = (u8)(bld & 0x3F);
+    /* Fenster aus (dunkle Gebiete wie das Königliche Tal zeigen sonst nur die Lichtkreise) */
+    const u8 disp_hi = gIoMem[0x01];
+    gIoMem[0x01] = (u8)(disp_hi & ~0xE0);
     Port_PPU_SetPresentIsFirstOfTick(false);
     Port_PPU_PresentFrame();
     port_hdma_vblank_reset();
     gIoMem[0x50] = bld;
+    gIoMem[0x01] = disp_hi;
     gTmcCoreLayers = layers;
     gTmcCoreNoObj = 0;
     sCapture = 0;
@@ -757,4 +764,47 @@ EXPORT int tmc_place_safe(void) {
         }
     }
     return 0;
+}
+
+/* besondere Punkte im aktuellen Raum für die Karte: je drei Werte (Art, x, y in Weltpixeln).
+ * Art 1 = Schrumpfpunkt (Minish-Portal), 2 = Windwappen, 3 = Bohnenranke */
+#include "manager.h"
+#include "manager/minishPortalManager.h"
+#include "object.h"
+extern bool32 Port_IsValidEntityAddr(const void* p);
+
+EXPORT int tmc_room_marks(int* out, int cap) {
+    if (gMain.task != 2)
+        return 0;
+    int n = 0;
+    for (int l = 0; l < 9; l++) {
+        LinkedList* list = &gEntityLists[l];
+        Entity* e = list->first;
+        for (int w = 0; w < 256 && e != NULL && (intptr_t)e != (intptr_t)list && Port_IsValidEntityAddr(e); w++, e = e->next) {
+            int kind = 0, x = 0, y = 0;
+            if (e->kind == MANAGER && e->id == MINISH_PORTAL_MANAGER) {
+                MinishPortalManager* m = (MinishPortalManager*)e;
+                kind = 1;
+                x = gRoomControls.origin_x + m->unk_38;
+                y = gRoomControls.origin_y + m->unk_3a;
+            } else if (e->kind == OBJECT && e->id == WINDCREST) {
+                kind = 2;
+            } else if (e->kind == OBJECT && e->id == BEANSTALK) {
+                kind = 3;
+            }
+            if (kind == 0)
+                continue;
+            if (kind != 1) {
+                x = e->x.HALF.HI;
+                y = e->y.HALF.HI;
+            }
+            if (n + 3 <= cap) {
+                out[n] = kind;
+                out[n + 1] = x;
+                out[n + 2] = y;
+                n += 3;
+            }
+        }
+    }
+    return n / 3;
 }

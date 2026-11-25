@@ -803,7 +803,7 @@ impl App {
                 let composed = match (y_item, self.gba.icons_rgba.get(&0)) {
                     (0, _) | (_, None) => None,
                     (i, Some(base)) => match (self.gba.icons_rgba.get(&i), self.gba.ring_raw.as_ref(), self.gba.icons_inv.get(&i)) {
-                        (Some(hud), Some(ring), _) => Some(super::slot_from_b(base, hud, ring)),
+                        (Some(hud), Some(ring), _) => Some(super::slot_from_b_nocount(base, hud, ring, y_item, self.gba.item_off.unwrap_or((1, 4)))),
                         (_, _, Some(item)) => Some(super::compose_slot(base, item, self.gba.item_off.unwrap_or((1, 4)))),
                         _ => None,
                     },

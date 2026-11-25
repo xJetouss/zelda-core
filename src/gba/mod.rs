@@ -26,7 +26,7 @@ pub const ICON_H: usize = 30;
 pub const INV_ICON: usize = 18;
 /// Kästchen der Item-Leiste (Pixel), wie die Kästchen im Item-Menü
 pub const TILE_W: usize = 26;
-pub const TILE_H: usize = 20;
+pub const TILE_H: usize = 22;
 /// Picori: Hintergrundebenen beim Aufnehmen der Item-Symbole (0 = nur Figuren)
 pub const ICON_LAYERS: i32 = 0;
 
@@ -801,6 +801,9 @@ mod running {
         pub fn travel(&self, area: u8, room: u8, x: i32, y: i32) -> bool {
             self.rc.as_ref().is_some_and(|c| c.travel(area, room, x, y))
         }
+        pub fn room_marks(&self) -> Vec<(u8, i32, i32)> {
+            self.rc.as_ref().map_or(Vec::new(), |c| c.room_marks())
+        }
         pub fn place_safe(&self) -> bool {
             self.rc.as_ref().is_some_and(|c| c.place_safe())
         }
@@ -1098,7 +1101,7 @@ pub fn bar_tile(item: &[u8], sel: bool) -> Vec<crate::gfx::Color32> {
     let fill = if sel { Color32::from_rgb(120, 216, 243) } else { Color32::from_rgb(165, 165, 165) };
     let white = Color32::from_rgb(243, 243, 243);
     // Ankerpunkt wie im Item-Menü (cx, cy); weiße Fläche je Zeile von–bis
-    let (cx, cy) = (13isize, 16isize);
+    let (cx, cy) = (13isize, 17isize);
     const MASK: [(isize, isize, isize); 17] = [
         (-14, -4, 3),
         (-13, -6, 5),
@@ -1131,8 +1134,8 @@ pub fn bar_tile(item: &[u8], sel: bool) -> Vec<crate::gfx::Color32> {
             }
         }
     }
-    // Item (INV_ICON²): links oben bei (cx - 9, cy - 16), wie im Item-Menü ausgeschnitten
-    let (ox, oy) = (cx - 9, cy - 16);
+    // Item (INV_ICON²): links oben bei (cx - 9, cy - 15), wie im Item-Menü ausgeschnitten
+    let (ox, oy) = (cx - 9, cy - 15);
     for y in 0..INV_ICON {
         for x in 0..INV_ICON {
             let o = (y * INV_ICON + x) * 4;
@@ -1186,6 +1189,24 @@ pub fn slot_from_b(base: &[u8], hud: &[u8], ring: &[u8]) -> Vec<u8> {
         }
     }
     out
+}
+
+/// Y-Feld wie `slot_from_b`, aber nie mit Anzahl: bei Bomben, Fernzünder-Bomben, Bogen den Bereich der Ziffern
+/// (unten rechts) wieder auf den leeren Kreis setzen und das Item dort ergänzen (bei Bomben gespiegelt)
+pub fn slot_from_b_nocount(base: &[u8], hud: &[u8], ring: &[u8], item: u8, off: (isize, isize)) -> Vec<u8> {
+    let mut out = slot_from_b(base, hud, ring);
+    if !minish::COUNTED.contains(&item) {
+        return out;
+    }
+    for y in 15..ICON_H {
+        for x in 13..ICON_W {
+            let o = (y * ICON_W + x) * 4;
+            out[o..o + 4].copy_from_slice(&base[o..o + 4]);
+        }
+    }
+    let mut it = item_from_b(hud, ring, off, true);
+    clean_counted(&mut it, item);
+    compose_slot(&out, &it, off)
 }
 
 /// Item-Grafik (INV_ICON²) aus der B-Aufnahme lösen: was sich vom leeren B-Kreis unterscheidet, im Bereich, in dem
@@ -1259,7 +1280,8 @@ pub fn crop_inv_icon(px: &[u8], w: usize, h: usize, cx: usize, cy: usize, under_
     let mut out = vec![0u8; S * S * 4];
     for y in 0..S {
         for x in 0..S {
-            let (fx, fy) = ((cx + x) as isize - 9, (cy + y) as isize - 16);
+            // Zeilen -15..+2 um den Ankerpunkt: manche Items (Spiegelschild, Handschuhe) reichen bis +2
+            let (fx, fy) = ((cx + x) as isize - 9, (cy + y) as isize - 15);
             if fx < 0 || fy < 0 || fx as usize >= w || fy as usize >= h {
                 continue;
             }
@@ -1893,7 +1915,7 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
             if off_all.is_none() {
                 off_all = off;
             }
-            let ours = if std::env::var_os("GBA_FROM_INV").is_some() { compose_slot(&base, item, off.or(off_all).unwrap_or((1, 4))) } else { slot_from_b(&base, &truth, &ring) };
+            let ours = if std::env::var_os("GBA_FROM_INV").is_some() { compose_slot(&base, item, off.or(off_all).unwrap_or((1, 4))) } else { slot_from_b_nocount(&base, &truth, &ring, i, off.or(off_all).unwrap_or((1, 4))) };
             // Abweichung außerhalb des Buchstabenbereichs (Mitte des Kreises)
             let mut bad = 0;
             for y in 0..ICON_H {
@@ -2122,6 +2144,8 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
         spaces.sort();
         spaces.dedup();
         println!("Räume auf der Karte: {}", spaces.len());
+        let cnt = |k: u8| d.marks.iter().filter(|m| m.1 == k).count();
+        println!("Punkte: Schrumpfpunkte {}, Windwappen {}, Bohnenranken {}", cnt(1), cnt(2), cnt(3));
         for area in 0u8..0x90 {
             if g.area_kind(area) & 1 != 0 {
                 let rr: Vec<String> = (0..g.room_count(area) as u8).filter_map(|r| g.room_rect(area, r).map(|v| format!("{r:02X}@{},{} {}x{}", v[0], v[1], v[2], v[3]))).collect();

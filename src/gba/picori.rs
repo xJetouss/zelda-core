@@ -72,6 +72,7 @@ struct Api {
     area_name: FName,
     travel: FWarp,
     place_safe: FVoidI,
+    room_marks: FProg,
 }
 
 /// geladene DLL, ROM des laufenden Picori, Anfangszustand
@@ -157,6 +158,7 @@ fn load_api() -> Result<&'static Api, String> {
             area_name: f!("tmc_area_name"),
             travel: f!("tmc_travel"),
             place_safe: f!("tmc_place_safe"),
+            room_marks: f!("tmc_room_marks"),
         };
         Ok(Box::leak(Box::new(api)))
     }
@@ -494,6 +496,15 @@ impl Core {
     /// Schnellreise: Sprung in einen Raum (ohne Änderung am Spielstand), danach Link auf freie Stelle
     pub fn travel(&self, area: u8, room: u8, x: i32, y: i32) -> bool {
         self.ready && unsafe { (self.api.travel)(area as i32, room as i32, x, y) } != 0
+    }
+    /// besondere Punkte im aktuellen Raum: (Art, x, y) – 1 Schrumpfpunkt, 2 Windwappen, 3 Bohnenranke
+    pub fn room_marks(&self) -> Vec<(u8, i32, i32)> {
+        if !self.ready {
+            return Vec::new();
+        }
+        let mut v = vec![0i32; 3 * 64];
+        let n = unsafe { (self.api.room_marks)(v.as_mut_ptr(), v.len() as i32) }.max(0) as usize;
+        (0..n.min(64)).map(|i| (v[i * 3] as u8, v[i * 3 + 1], v[i * 3 + 2])).collect()
     }
     pub fn place_safe(&self) -> bool {
         self.ready && unsafe { (self.api.place_safe)() } != 0

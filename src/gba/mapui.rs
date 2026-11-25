@@ -113,7 +113,7 @@ pub struct MapUi {
     /// Fadenkreuz (Abstand zur Kartenmitte, Bildschirmpunkte) und halbe Kartengröße – wie bei A Link to the Past
     cur: gfx::Vec2,
     half: gfx::Vec2,
-    /// Anzeige (X): 0 Übersicht, 1 Sammeln, 2 Alles, 3 Geholt, 4 Schnellreise
+    /// Anzeige (Y, wie bei A Link to the Past): 0 Übersicht, 1 Sammeln, 2 Schnellreise, 3 Alles
     filter: u8,
     /// eigene Markierungen (Raum, x, y, Symbol) und besuchte Räume (Schnellreise), gespeichert in `<rom>.tmcpins`
     pins: Vec<(Space, f32, f32, u8)>,
@@ -136,6 +136,8 @@ enum Sel {
     Loc(usize),
     Travel(u8, u8),
     Pin(usize),
+    /// besonderer Punkt (Index in `MapData::marks`)
+    Mark(usize),
 }
 
 /// Symbole für eigene Markierungen (wie bei A Link to the Past)
@@ -290,12 +292,20 @@ impl App {
         // ganze Karte einmalig erstellen, sobald die Karte offen ist (das Spiel steht dabei; danach genau wie vorher)
         if m.open && m.gen.is_none() && m.data.as_ref().is_some_and(|d| !d.complete()) {
             m.gen = MapGen::new(g);
+            if m.gen.is_some() {
+                if let Some(d) = m.data.as_mut() {
+                    d.marks.clear();
+                }
+            }
         }
         if let (Some(gen), Some(d)) = (m.gen.as_mut(), m.data.as_mut()) {
             gen.step(g, d, std::time::Duration::from_millis(14));
             if gen.done {
                 m.gen = None;
                 d.save();
+                // Ausschnitte neu berechnen (die Karte ist jetzt viel größer als während des Erstellens)
+                m.views.clear();
+                m.cur = gfx::Vec2::ZERO;
             }
             return;
         }
@@ -572,9 +582,12 @@ impl App {
         }
         let tab = self.gba.map.tab;
         if tab <= 1 {
-            // X: Anzeige wechseln (wie Y bei A Link to the Past)
+            // wie bei A Link to the Past: X = alles / nur gesammelt, Y = Anzeige (Oberwelt) bzw. nächster Raum
             if pressed & X != 0 {
-                self.gba.map.filter = (self.gba.map.filter + 1) % 5;
+                self.gba.map.spoiler = !self.gba.map.spoiler;
+            }
+            if tab == 0 && pressed & Y != 0 {
+                self.gba.map.filter = (self.gba.map.filter + 1) % 4;
             }
             // Y: nächster Dungeon/Raum
             if tab == 1 && pressed & Y != 0 {
@@ -964,26 +977,36 @@ impl App {
         }
         // Symbole sammeln: (Position, Auswahl, Symbol, Farbe, Punkt in der Übersicht)
         let rad = fs * 0.55;
-        let filt = m.filter;
-        let show_locs = filt != 4;
-        let show_travel = filt == 0 || filt == 2 || filt == 4;
+        let filt = m.filter.min(3);
+        let spoiler = m.spoiler;
+        // Anzeige (Y): 0 Übersicht, 1 Sammeln, 2 Schnellreise, 3 Alles
+        let show_travel = filt != 1;
+        let show_special = filt != 1;
         let mut marks: Vec<(gfx::Pos2, Sel, Icon, Color32, bool)> = Vec::new();
-        if show_locs {
+        if filt != 2 {
             for (i, l) in d.locs.iter().enumerate() {
                 let Some(at) = l.at.filter(|a| a.0 == sp) else { continue };
                 let done = l.done == Some(true);
-                let show = match filt {
-                    0 => matches!(l.kind, LocKind::HeartPiece) || !done,
-                    1 => !done,
-                    3 => done,
-                    _ => true,
-                };
-                if !show {
+                // Übersicht: nur Herzteile und Truhen; X: ohne „alles“ nur Gesammeltes
+                if (filt == 0 && !matches!(l.kind, LocKind::HeartPiece | LocKind::Chest)) || (!spoiler && !done) {
                     continue;
                 }
                 let (icon, col) = kind_look(l.kind);
-                // fehlt noch = Farbe der Art (das sucht man), geholt = grau
-                marks.push((to_screen(at.1, at.2), Sel::Loc(i), icon, if done { GREYC } else { col }, true));
+                // wie bei A Link to the Past: gesammelt = Farbe, fehlt noch = grau
+                marks.push((to_screen(at.1, at.2), Sel::Loc(i), icon, if done { col } else { GREYC }, true));
+            }
+        }
+        if show_special {
+            for (i, mk) in d.marks.iter().enumerate() {
+                if mk.0 != sp || (filt == 2 && mk.1 != 2) {
+                    continue;
+                }
+                let (icon, col) = match mk.1 {
+                    1 => (Icon::Dot, Color32::from_rgb(190, 120, 255)),
+                    2 => (Icon::Note, Color32::from_rgb(140, 230, 255)),
+                    _ => (Icon::Upgrade, Color32::from_rgb(110, 220, 90)),
+                };
+                marks.push((to_screen(mk.2, mk.3), Sel::Mark(i), icon, col, false));
             }
         }
         if show_travel {
@@ -997,7 +1020,7 @@ impl App {
         }
         for (i, pn) in m.pins.iter().enumerate() {
             if pn.0 == sp {
-                marks.push((to_screen(pn.1, pn.2), Sel::Pin(i), PIN_ICONS[pn.3 as usize % PIN_ICONS.len()], Color32::from_rgb(255, 200, 60), false));
+                marks.push((to_screen(pn.1, pn.2), Sel::Pin(i), PIN_ICONS[pn.3 as usize % PIN_ICONS.len()], Color32::WHITE, false));
             }
         }
         // Symbole am selben Ort im Kreis verteilen (wie bei A Link to the Past), nicht in der Übersicht
@@ -1025,7 +1048,7 @@ impl App {
         let sel = marks.iter().filter(|mk| mk.0.distance(aim) < rad * 1.6).min_by(|a, b| a.0.distance(aim).total_cmp(&b.0.distance(aim))).map(|mk| mk.1);
         m.sel = if m.pin_pick.is_some() { None } else { sel };
         let pin_pick = m.pin_pick;
-        let labels: Vec<(String, gfx::Pos2)> = if sp == 0 && overview { m.labels.iter().map(|(n, x, y)| (n.to_uppercase(), to_screen(*x, *y))).collect() } else { Vec::new() };
+        let labels: Vec<(String, gfx::Pos2)> = Vec::new();
         let info = match sel {
             Some(Sel::Loc(i)) => d.locs.get(i).map(|l| {
                 let st = match l.done {
@@ -1040,12 +1063,23 @@ impl App {
                 tr(en, "A: hinreisen", "A: travel there").to_string(),
             )),
             Some(Sel::Pin(_)) => Some((tr(en, "EIGENE MARKIERUNG", "OWN MARKER").to_string(), tr(en, "A: entfernen", "A: remove").to_string())),
+            Some(Sel::Mark(i)) => d.marks.get(i).map(|mk| {
+                let (de, e) = match mk.1 {
+                    1 => ("SCHRUMPFPUNKT", "MINISH PORTAL"),
+                    2 => ("WINDWAPPEN", "WIND CREST"),
+                    _ => ("BOHNENRANKE", "BEANSTALK"),
+                };
+                (tr(en, de, e).to_string(), String::new())
+            }),
             _ => None,
         }
         .unwrap_or_else(|| {
             let here = d.locs.iter().filter(|l| l.at.is_some_and(|a| a.0 == sp) && l.done.is_some());
             let (a, n) = here.fold((0, 0), |s, l| (s.0 + (l.done == Some(true)) as usize, s.1 + 1));
-            (format!("{space_name}  {a}/{n}"), String::new())
+            // Gebiet unter dem Fadenkreuz (nur dort Text, nicht überall auf der Karte)
+            let at = c + (aim - r.center()) / z.max(0.01);
+            let under = m.rects.iter().find(|(_, (rr, s))| *s == sp && at.x >= rr[0] as f32 && at.y >= rr[1] as f32 && at.x < (rr[0] + rr[2]) as f32 && at.y < (rr[1] + rr[3]) as f32).and_then(|((ar, _), _)| m.area_names.get(ar).cloned());
+            (format!("{}  {a}/{n}", under.unwrap_or(space_name.clone())), String::new())
         });
         // ---- zeichnen
         for (name, pos) in &labels {
@@ -1061,6 +1095,13 @@ impl App {
                 continue;
             }
             let s = Some(*s_) == sel;
+            if matches!(s_, Sel::Travel(..)) {
+                let n = if s { 6.0 } else { 5.0 };
+                p.rect_filled(gfx::Rect::from_center_size(*pos, gfx::vec2((n + 2.0) * gp, (n + 2.0) * gp)), 0.0, Color32::from_rgb(16, 16, 24));
+                p.rect_filled(gfx::Rect::from_center_size(*pos, gfx::vec2(n * gp, n * gp)), 0.0, if s && (t * 4.0) as i64 % 2 == 0 { Color32::from_rgb(248, 216, 64) } else { DOOR });
+                p.rect_filled(gfx::Rect::from_min_size(*pos - gfx::vec2(n * gp * 0.5, n * gp * 0.5), gfx::vec2(gp, gp)), 0.0, Color32::from_rgb(220, 255, 255));
+                continue;
+            }
             if overview && *dot && !s {
                 // Übersicht: kleiner Punkt in der Farbe der Art
                 let dd = gp * 4.0;
@@ -1077,12 +1118,28 @@ impl App {
                 self.link_dot(p, lp, gp, rad * 0.6);
             }
         }
-        // Fadenkreuz wie bei A Link to the Past
-        let ch = fs * 0.45;
-        for (o, sz) in [(gfx::vec2(-ch, 0.0), gfx::vec2(ch * 0.7, gp)), (gfx::vec2(ch * 0.3, 0.0), gfx::vec2(ch * 0.7, gp)), (gfx::vec2(0.0, -ch), gfx::vec2(gp, ch * 0.7)), (gfx::vec2(0.0, ch * 0.3), gfx::vec2(gp, ch * 0.7))] {
-            let a = aim + o - if sz.x > sz.y { gfx::vec2(0.0, gp * 0.5) } else { gfx::vec2(gp * 0.5, 0.0) };
-            p.rect_filled(gfx::Rect::from_min_size(a, sz).expand(gp), 0.0, Color32::from_black_alpha(160));
-            p.rect_filled(gfx::Rect::from_min_size(a, sz), 0.0, Color32::WHITE);
+        // Fadenkreuz wie bei A Link to the Past: goldene Ecken, rastet auf dem gewählten Symbol ein
+        {
+            let lock = sel.and_then(|k| marks.iter().find(|mk| mk.1 == k)).map(|mk| mk.0);
+            let cc = lock.unwrap_or(aim);
+            let pulse = (t * 4.0).sin();
+            let h = if lock.is_some() { 7.0 } else { 5.0 } + if pulse > 0.0 { 1.0 } else { 0.0 };
+            for (sx, sy) in [(-1.0f32, -1.0f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+                let corner = cc + gfx::vec2(sx * h * gp, sy * h * gp);
+                let arm = 3.0 * gp;
+                let hx = gfx::Rect::from_two_pos(corner, corner + gfx::vec2(-sx * arm, -sy * gp));
+                let vy = gfx::Rect::from_two_pos(corner, corner + gfx::vec2(-sx * gp, -sy * arm));
+                for rr in [hx, vy] {
+                    p.rect_filled(rr.expand(gp), 0.0, Color32::from_rgb(16, 16, 24));
+                }
+                for rr in [hx, vy] {
+                    p.rect_filled(rr, 0.0, GOLD);
+                }
+            }
+            if lock.is_none() {
+                p.rect_filled(gfx::Rect::from_center_size(cc, gfx::vec2(gp * 3.0, gp * 3.0)), 0.0, Color32::from_rgb(16, 16, 24));
+                p.rect_filled(gfx::Rect::from_center_size(cc, gfx::vec2(gp, gp)), 0.0, Color32::WHITE);
+            }
         }
         // Markierung setzen: Symbolauswahl am Fadenkreuz
         if let Some((_, _, _, sym)) = pin_pick {
@@ -1096,14 +1153,19 @@ impl App {
                 if k as u8 == sym {
                     p.rect_stroke(gfx::Rect::from_center_size(cc, gfx::vec2(cell * 0.9, cell * 0.9)), 0.0, Stroke::new(gp, Color32::WHITE));
                 }
-                paint_icon(p, cc, fs * 0.45, *ic, if k as u8 == sym { Color32::from_rgb(255, 200, 60) } else { GREYC });
+                paint_icon(p, cc, fs * 0.45, *ic, Color32::WHITE);
             }
         }
         // Anzeige oben rechts (X wechselt)
         {
-            let names_de = ["ÜBERSICHT", "SAMMELN", "ALLES", "GEHOLT", "SCHNELLREISE"];
-            let names_en = ["OVERVIEW", "COLLECT", "ALL", "COLLECTED", "FAST TRAVEL"];
-            let txt = format!("X  {}", if en { names_en[filt as usize] } else { names_de[filt as usize] });
+            let names_de = ["ÜBERSICHT", "SAMMELN", "SCHNELLREISE", "ALLES"];
+            let names_en = ["OVERVIEW", "COLLECT", "FAST TRAVEL", "ALL"];
+            let view = if spoiler { tr(en, "ALLES", "ALL") } else { tr(en, "GESAMMELT", "COLLECTED") };
+            let txt = if sp == 0 {
+                format!("Y  {}   X  {view}", if en { names_en[filt as usize] } else { names_de[filt as usize] })
+            } else {
+                format!("X  {view}")
+            };
             let small = fs * 0.75;
             let tw = self.text_w(p, &txt, small);
             let br = gfx::Rect::from_min_size(gfx::pos2(r.right() - tw - fs * 1.6, r.top() + fs * 0.4), gfx::vec2(tw + fs * 1.2, fs * 1.3));

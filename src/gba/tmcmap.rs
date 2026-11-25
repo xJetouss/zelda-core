@@ -143,6 +143,8 @@ pub struct MapData {
     pub dirty: Vec<(Space, i32, i32)>,
     pub locs: Vec<Loc>,
     pub locs_loaded: bool,
+    /// besondere Punkte (beim Erstellen gefunden): Raum, Art (1 Schrumpfpunkt, 2 Windwappen, 3 Bohnenranke), x, y
+    pub marks: Vec<(Space, u8, f32, f32)>,
     /// seit dem letzten Speichern geändert
     pub unsaved: bool,
     pub path: Option<PathBuf>,
@@ -170,6 +172,18 @@ impl MapData {
             let cx = i32::from_le_bytes([h[2], h[3], h[4], h[5]]);
             let cy = i32::from_le_bytes([h[6], h[7], h[8], h[9]]);
             let Some(px) = rd(&raw, &mut i, CH * CH * 4) else { break };
+            if space == 0xFFFE {
+                // besondere Punkte: Anzahl, dann je 12 Byte (Raum u16, Art u8, frei, x i32, y i32)
+                let n = u32::from_le_bytes([px[0], px[1], px[2], px[3]]) as usize;
+                for k in 0..n.min((CH * CH * 4 - 4) / 12) {
+                    let o = 4 + k * 12;
+                    let sp = u16::from_le_bytes([px[o], px[o + 1]]);
+                    let x = i32::from_le_bytes([px[o + 4], px[o + 5], px[o + 6], px[o + 7]]);
+                    let y = i32::from_le_bytes([px[o + 8], px[o + 9], px[o + 10], px[o + 11]]);
+                    m.marks.push((sp, px[o + 2], x as f32, y as f32));
+                }
+                continue;
+            }
             m.chunks.insert((space, cx, cy), px);
             m.dirty.push((space, cx, cy));
         }
@@ -182,6 +196,22 @@ impl MapData {
             return;
         }
         let mut raw = Vec::with_capacity(self.chunks.len() * (CH * CH * 4 + 10));
+        if !self.marks.is_empty() {
+            let mut px = vec![0u8; CH * CH * 4];
+            let n = self.marks.len().min((CH * CH * 4 - 4) / 12);
+            px[..4].copy_from_slice(&(n as u32).to_le_bytes());
+            for (k, &(sp, kind, x, y)) in self.marks.iter().take(n).enumerate() {
+                let o = 4 + k * 12;
+                px[o..o + 2].copy_from_slice(&sp.to_le_bytes());
+                px[o + 2] = kind;
+                px[o + 4..o + 8].copy_from_slice(&(x as i32).to_le_bytes());
+                px[o + 8..o + 12].copy_from_slice(&(y as i32).to_le_bytes());
+            }
+            raw.extend_from_slice(&0xFFFEu16.to_le_bytes());
+            raw.extend_from_slice(&0i32.to_le_bytes());
+            raw.extend_from_slice(&0i32.to_le_bytes());
+            raw.extend_from_slice(&px);
+        }
         for (&(s, cx, cy), px) in &self.chunks {
             raw.extend_from_slice(&s.to_le_bytes());
             raw.extend_from_slice(&cx.to_le_bytes());
@@ -242,7 +272,7 @@ impl MapData {
 }
 
 /// Fassung der vorab erstellten Karte (bei Änderungen am Verfahren erhöhen: dann wird neu erstellt)
-pub const GEN_VERSION: i32 = 1;
+pub const GEN_VERSION: i32 = 2;
 
 impl MapData {
     /// ganze Karte schon erstellt?
@@ -250,6 +280,8 @@ impl MapData {
         self.chunks.contains_key(&(0xFFFF, GEN_VERSION, 0))
     }
     pub fn set_complete(&mut self) {
+        // ältere Fassungen der fertigen Karte entfernen
+        self.chunks.retain(|k, _| k.0 != 0xFFFF);
         self.chunks.insert((0xFFFF, GEN_VERSION, 0), vec![0u8; CH * CH * 4]);
         self.unsaved = true;
     }
@@ -419,6 +451,15 @@ impl MapGen {
                         let xs = axis(r[0], r[2], fw);
                         let ys = axis(r[1], r[3], fh);
                         self.shots = ys.iter().flat_map(|&y| xs.iter().map(move |&x| (x, y))).collect();
+                        // Schrumpfpunkte, Windwappen, Bohnenranken dieses Raums (ohne doppelte)
+                        for (k, x, y) in g.room_marks() {
+                            let (x, y) = (x as f32, y as f32);
+                            // eine Bohnenranke besteht aus mehreren Teilen: nahe Teile zählen als eine
+                            let near = if k == 3 { 96.0 } else { 8.0 };
+                            if !d.marks.iter().any(|m| m.0 == sp && m.1 == k && (m.2 - x).abs() < near && (m.3 - y).abs() < near) {
+                                d.marks.push((sp, k, x, y));
+                            }
+                        }
                         self.shot = 0;
                         self.settle = 0;
                         self.phase = GenPhase::Shoot;
