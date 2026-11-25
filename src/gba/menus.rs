@@ -202,7 +202,8 @@ impl Root {
                 chk!("gba_y", t("Y-Taste (zusätzliches Item auf Y)", "Y button (extra item on Y)"), s.gba_y);
                 chk!("gba_bar", t("Item-Leiste über das Steuerkreuz (↓ B, → A, ← Y)", "Item bar on the d-pad (↓ B, → A, ← Y)"), s.gba_bar);
                 chk!("gba_map", t("Weltkarte von Anfang an (Item-Menü: L)", "World map from the start (item menu: L)"), s.gba_map);
-                chk!("gba_ownmap", t("Eigene Karte mit 100 % (Minus oder Kartenseite)", "Own map with 100 % (Minus or map page)"), s.gba_ownmap);
+                chk!("gba_ownmap", t("Eigene Karte mit 100 % (Minus)", "Own map with 100 % (Minus)"), s.gba_ownmap);
+                chk!("gba_mapwin", t("Karte im eigenen Fenster", "Map in its own window"), s.map_own_window);
             }
             7 => {
                 v.push(self.item("gba_cheats", t("Cheat-Liste…", "Cheat list…"), String::new(), true, true, cx, |r| r.app.gba.win_cheats = true));

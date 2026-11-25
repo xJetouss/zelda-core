@@ -70,6 +70,8 @@ struct Api {
     cam: FXYv,
     progress: FProg,
     area_name: FName,
+    travel: FWarp,
+    place_safe: FVoidI,
 }
 
 /// geladene DLL, ROM des laufenden Picori, Anfangszustand
@@ -153,6 +155,8 @@ fn load_api() -> Result<&'static Api, String> {
             cam: f!("tmc_cam"),
             progress: f!("tmc_progress"),
             area_name: f!("tmc_area_name"),
+            travel: f!("tmc_travel"),
+            place_safe: f!("tmc_place_safe"),
         };
         Ok(Box::leak(Box::new(api)))
     }
@@ -486,6 +490,13 @@ impl Core {
         }
         let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
         Some((String::from_utf8_lossy(&buf[..end]).into_owned(), r == 1))
+    }
+    /// Schnellreise: Sprung in einen Raum (ohne Änderung am Spielstand), danach Link auf freie Stelle
+    pub fn travel(&self, area: u8, room: u8, x: i32, y: i32) -> bool {
+        self.ready && unsafe { (self.api.travel)(area as i32, room as i32, x, y) } != 0
+    }
+    pub fn place_safe(&self) -> bool {
+        self.ready && unsafe { (self.api.place_safe)() } != 0
     }
     pub fn cam(&self, x: i32, y: i32) {
         if self.ready {

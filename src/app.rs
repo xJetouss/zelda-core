@@ -3529,7 +3529,8 @@ impl App {
             if minus_edge && !self.win_states {
                 self.gba_map_toggle();
             }
-            if self.gba.map.open && !self.win_states {
+            // Karte im eigenen Fenster: Eingaben nur an die Karte, wenn deren Fenster vorne ist
+            if self.gba.map.open && !self.win_states && (!self.s.map_own_window || self.map_focused) {
                 let dt = ctx.input(|i| i.stable_dt).clamp(0.0, 0.1);
                 self.gba_map_input(menu_pad, dt);
                 self.states_prev_pad = menu_pad;

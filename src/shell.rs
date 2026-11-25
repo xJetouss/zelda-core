@@ -329,7 +329,8 @@ impl Root {
 
     /// Karte im eigenen Fenster öffnen/schließen, wie es die App gerade will
     fn sync_map_window(&mut self, window: &mut Window, cx: &mut Context<Root>) {
-        let want = self.app.win_map && self.app.s.map_own_window && self.app.game.is_some();
+        // A Link to the Past oder The Minish Cap (eigene Karte der PC-Fassung)
+        let want = self.app.s.map_own_window && ((self.app.win_map && self.app.game.is_some()) || (self.app.gba.active() && self.app.gba.map.open));
         match (&self.map_win, want) {
             (None, true) if !self.map_opening => {
                 self.map_opening = true;
@@ -500,6 +501,7 @@ impl MapView {
             if let Some(r) = r2.upgrade() {
                 r.update(cx, |r, _| {
                     r.app.win_map = false;
+                    r.app.gba.map.open = false;
                     r.map_win = None;
                     r.app.map_focused = false;
                 });
@@ -520,7 +522,9 @@ impl Render for MapView {
         if let Some(r) = self.root.upgrade() {
             r.update(cx, |r, _| {
                 r.app.map_focused = focused;
-                if r.app.win_map && r.app.game.is_some() {
+                if r.app.gba.active() {
+                    r.app.gba_map_window(&ctx);
+                } else if r.app.win_map && r.app.game.is_some() {
                     r.app.map_window(&ctx);
                 }
             });

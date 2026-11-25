@@ -1,4 +1,4 @@
-# Zelda Core 0.41 – A Link to the Past & The Minish Cap
+# Zelda Core 0.42 – A Link to the Past & The Minish Cap
 
 Eigener SNES-Emulator in Rust, zugeschnitten auf *The Legend of Zelda: A Link to the Past*.
 **Keine ROM enthalten** – du brauchst eine Kopie deines eigenen Moduls (`.sfc`/`.smc`).
@@ -198,6 +198,11 @@ Schalter: *Bild → Recomp (Picori)* (Standard an; aus = mGBA).
   einmalig jeden Raum und fotografiert ihn (etwa eine Minute, danach ist der Spielstand genau wie vorher). Gespeichert
   wird sie als `<rom>.tmcmap` neben der ROM – enthält Spielgrafik, nicht weitergeben. Das Item-Menü hat dann keine
   Kartenseite mehr, L/R wechselt zwischen Items und Quest-Status. Abschaltbar unter *Spiel*.
+  Bedienung wie bei A Link to the Past: Fadenkreuz mit dem Stick (schiebt die Karte am Rand mit), rechter Stick
+  zoomt, X wechselt die Anzeige (Übersicht, Sammeln, Alles, Geholt, Schnellreise), Y wechselt unter DUNGEON/RÄUME den
+  Raum. **Schnellreise:** Jeder besuchte Raum ist ein Reisepunkt, A reist hin (Link landet auf freiem Boden).
+  **Eigene Markierungen:** A auf eine freie Stelle, ←/→ Symbol, A setzen; A auf eine Markierung entfernt sie
+  (gespeichert in `<rom>.tmcpins`). Die Karte kann auch im eigenen Fenster laufen (*Spiel → Karte im eigenen Fenster*).
 - Der Spielstand des Spiels ist dieselbe `.sav` wie bei mGBA (gleiches Format). Sie wird nur geschrieben, wenn
   „Spielinterne Spielstände speichern“ an ist, sonst speichert man nur über Savestates.
 - Beim **ersten Start** entpackt Picori Grafiken und Töne aus deiner ROM in den Ordner `minish` neben der .exe

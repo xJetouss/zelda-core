@@ -20,7 +20,8 @@ pub const H: usize = 160;
 pub const ICON_X: usize = 174;
 pub const ICON_Y: usize = 8;
 pub const ICON_W: usize = 24;
-pub const ICON_H: usize = 28;
+/// 30 Reihen: der Schatten unter dem Tastenkreis reicht bis in die letzte Reihe
+pub const ICON_H: usize = 30;
 /// Item-Grafik aus dem Item-Menü (Seitenlänge in Pixeln)
 pub const INV_ICON: usize = 18;
 /// Kästchen der Item-Leiste (Pixel), wie die Kästchen im Item-Menü
@@ -797,6 +798,12 @@ mod running {
         pub fn area_name(&self, area: u8) -> Option<(String, bool)> {
             self.rc.as_ref().and_then(|c| c.area_name(area))
         }
+        pub fn travel(&self, area: u8, room: u8, x: i32, y: i32) -> bool {
+            self.rc.as_ref().is_some_and(|c| c.travel(area, room, x, y))
+        }
+        pub fn place_safe(&self) -> bool {
+            self.rc.as_ref().is_some_and(|c| c.place_safe())
+        }
         pub fn progress(&self) -> Vec<i32> {
             self.rc.as_ref().map_or(Vec::new(), |c| c.progress())
         }
@@ -1183,7 +1190,7 @@ pub fn slot_from_b(base: &[u8], hud: &[u8], ring: &[u8]) -> Vec<u8> {
 
 /// Item-Grafik (INV_ICON²) aus der B-Aufnahme lösen: was sich vom leeren B-Kreis unterscheidet, im Bereich, in dem
 /// das Spiel Items auf B zeichnet (`off`, wie `find_item_offset`)
-pub fn item_from_b(hud: &[u8], ring: &[u8], off: (isize, isize)) -> Vec<u8> {
+pub fn item_from_b(hud: &[u8], ring: &[u8], off: (isize, isize), counted: bool) -> Vec<u8> {
     let mut out = vec![0u8; INV_ICON * INV_ICON * 4];
     for y in 0..INV_ICON {
         for x in 0..INV_ICON {
@@ -1192,7 +1199,7 @@ pub fn item_from_b(hud: &[u8], ring: &[u8], off: (isize, isize)) -> Vec<u8> {
                 continue;
             }
             // Anzahl (Bomben, Pfeile) unten rechts gehört nicht zur Grafik
-            if x >= INV_ICON - 5 && y >= 13 {
+            if counted && x >= INV_ICON - 5 && y >= 13 {
                 continue;
             }
             let h = (hy as usize * ICON_W + hx as usize) * 4;
@@ -1901,7 +1908,7 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
             }
             println!("{i:>4}  {bad:>4}  {off:?}  {}", minish::name(i, false));
             let to_c = |im: &[u8], o: usize| if im[o + 3] == 0 { crate::gfx::Color32::from_rgb(255, 0, 255) } else { crate::gfx::Color32::from_rgb(im[o], im[o + 1], im[o + 2]) };
-            let mut derived = item_from_b(&truth, &ring, off_all.unwrap_or((1, 4)));
+            let mut derived = item_from_b(&truth, &ring, off_all.unwrap_or((1, 4)), minish::COUNTED.contains(&i));
             clean_counted(&mut derived, i);
             let tile = bar_tile_count(if inv.contains_key(&i) { item } else { &derived }, false, match i { 7 | 8 => Some(23), 9 | 10 => Some(7), _ => None });
             let mut col = Vec::new();
@@ -1930,6 +1937,137 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
             }
         }
         crate::devtest::bmp(&format!("{out}/rc_items_check.bmp"), ICON_W * cols.len().max(1), hh, &px);
+    }
+
+    /// Picori: B-Feld im echten Bild neben der Aufnahme (Schatten), Item-Grafiken des Item-Menüs mit Rand (unten abgeschnitten?)
+    #[test]
+    #[ignore]
+    fn dev_rc_shadow() {
+        let (Ok(p), Ok(st)) = (std::env::var("PASTLINK_GBA_ROM"), std::env::var("GBA_RC_STATE")) else { return };
+        let out = std::env::var("PASTLINK_OUT").unwrap_or_else(|_| ".".into());
+        let mut g = Gba::load_with(Path::new(&p), true, false).unwrap();
+        while g.loading() {
+            g.run_frame(0);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let raw = lz4_flex::decompress_size_prepended(&std::fs::read(st).unwrap()).unwrap();
+        assert!(g.load_state(&raw));
+        for _ in 0..400 {
+            if g.warp(0x00, 0x00, 500, 500) {
+                break;
+            }
+            g.run_frame(0x0080);
+            g.run_frame(0);
+        }
+        for _ in 0..300 {
+            g.run_frame(0);
+        }
+        g.run_once("22002B32 5554
+22002B34 5555
+22002B36 5554
+22002B38 5500");
+        for _ in 0..20 {
+            g.run_frame(0);
+        }
+        let to_c = |im: &[u8], o: usize| if im[o + 3] == 0 { crate::gfx::Color32::from_rgb(255, 0, 255) } else { crate::gfx::Color32::from_rgb(im[o], im[o + 1], im[o + 2]) };
+        let (bx, by) = g.b_box().unwrap();
+        println!("B-Feld bei {bx},{by}, Bild {}x{}", g.w, g.h);
+        // echtes Bild: B-Feld mit 8 Pixel Rand
+        let (rw, rh) = (ICON_W + 16, ICON_H + 16);
+        let mut img = Vec::new();
+        for y in 0..rh {
+            for x in 0..rw {
+                let (fx, fy) = (bx - 8 + x as isize, by - 8 + y as isize);
+                img.push(if fx >= 0 && fy >= 0 && (fx as usize) < g.w && (fy as usize) < g.h { let i = (fy as usize * g.w + fx as usize) * 4; crate::gfx::Color32::from_rgb(g.frame[i], g.frame[i + 1], g.frame[i + 2]) } else { crate::gfx::Color32::BLACK });
+            }
+        }
+        crate::devtest::bmp(&format!("{out}/sh_frame.bmp"), rw, rh, &img);
+        for it in [0u8, 7, 17] {
+            if let Some(c) = g.capture_icon(it) {
+                let v: Vec<crate::gfx::Color32> = (0..ICON_W * ICON_H).map(|i| to_c(&c, i * 4)).collect();
+                crate::devtest::bmp(&format!("{out}/sh_cap{it}.bmp"), ICON_W, ICON_H, &v);
+            }
+        }
+        // Item-Menü: Grafiken mit großem Rand
+        for f in 0..90 {
+            g.run_frame(if f < 3 { 0x1000 } else { 0 });
+        }
+        let (spr, w, h) = g.capture_sprites().unwrap();
+        let v: Vec<crate::gfx::Color32> = (0..w * h).map(|i| to_c(&[spr[i * 4], spr[i * 4 + 1], spr[i * 4 + 2], 255], 0)).collect();
+        crate::devtest::bmp(&format!("{out}/sh_menu.bmp"), w, h, &v);
+        for i in g.owned_items() {
+            if let Some((cx, cy)) = g.menu_pos(i) {
+                println!("Item {i:>2} Anker {cx},{cy}");
+            }
+        }
+    }
+
+    /// Picori: Fundorte zählen – je Art gesamt, mit Raum, mit bekanntem Stand; ohne Raum auflisten
+    #[test]
+    #[ignore]
+    fn dev_rc_locstats() {
+        let Ok(p) = std::env::var("PASTLINK_GBA_ROM") else { return };
+        let mut g = Gba::load_with(Path::new(&p), true, false).unwrap();
+        while g.loading() {
+            g.run_frame(0);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let raw = g.locations(super::tmcmap::LOGIC);
+        let mut st: std::collections::BTreeMap<String, (usize, usize, usize)> = Default::default();
+        let mut missing = Vec::new();
+        for (name, key, ty) in &raw {
+            if name.contains("Dummy") || name.starts_with("Fake") || [1, 2, 5, 6, 7].contains(ty) {
+                continue;
+            }
+            let k = super::tmcmap::LocKind::from_name(name);
+            let e = st.entry(format!("{k:?}")).or_default();
+            e.0 += 1;
+            let placed = *key != u32::MAX && key & 0x8000_0000 == 0 && g.room_rect((key >> 16) as u8, (key >> 8) as u8).is_some();
+            if placed {
+                e.1 += 1;
+            } else if matches!(k, super::tmcmap::LocKind::HeartPiece | super::tmcmap::LocKind::Chest) {
+                missing.push(format!("{name} ({ty}, {key:08x})"));
+            }
+        }
+        println!("{st:?}");
+        println!("Herzteile/Truhen ohne Ort ({}):", missing.len());
+        for m in &missing {
+            println!("  {m}");
+        }
+    }
+
+    /// Picori: Schnellreise in einen Raum, danach Link auf freie Stelle
+    #[test]
+    #[ignore]
+    fn dev_rc_travel() {
+        let (Ok(p), Ok(st)) = (std::env::var("PASTLINK_GBA_ROM"), std::env::var("GBA_RC_STATE")) else { return };
+        let out = std::env::var("PASTLINK_OUT").unwrap_or_else(|_| ".".into());
+        let mut g = Gba::load_with(Path::new(&p), true, false).unwrap();
+        while g.loading() {
+            g.run_frame(0);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let raw = lz4_flex::decompress_size_prepended(&std::fs::read(st).unwrap()).unwrap();
+        assert!(g.load_state(&raw));
+        let (a, r) = (0x03u8, 0x06u8);
+        let rr = g.room_rect(a, r).unwrap();
+        let mut f = 0;
+        while !g.travel(a, r, rr[2] / 2, rr[3] / 2) && f < 600 {
+            g.run_frame(if f % 20 < 2 { 0x0080 } else { 0 });
+            f += 1;
+        }
+        println!("Sprung nach {f} Bildern");
+        for _ in 0..200 {
+            g.run_frame(0);
+        }
+        println!("vorher {:?}", g.map_view());
+        println!("frei gestellt: {}", g.place_safe());
+        for _ in 0..30 {
+            g.run_frame(0);
+        }
+        println!("nachher {:?}", g.map_view());
+        let c: Vec<crate::gfx::Color32> = g.frame.chunks_exact(4).map(|c| crate::gfx::Color32::from_rgb(c[0], c[1], c[2])).collect();
+        crate::devtest::bmp(&format!("{out}/travel.bmp"), g.w, g.h, &c);
     }
 
     /// Picori: ganze Karte vorab erstellen (alle Räume), Dauer messen, Übersichtsbilder je Raum speichern

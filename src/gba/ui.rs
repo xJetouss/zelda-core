@@ -272,6 +272,10 @@ impl App {
         let save_sram = self.s.save_sram;
         let Some(g) = self.gba.game.as_mut() else { return };
         g.save_sav = save_sram;
+        // Picori startet noch: weiterladen, auch wenn ein Menü offen ist (sonst bleibt „Recomp startet“ stehen)
+        if g.loading() {
+            g.run_frame(0);
+        }
         // Einstellungen „Spiel“: Weltkarte von Anfang an (mGBA braucht dafür die Cheats neu)
         if g.force_map != self.s.gba_map {
             g.force_map = self.s.gba_map;
@@ -651,7 +655,7 @@ impl App {
                     // genauer: aus der B-Aufnahme minus leerem B-Kreis (wie das Y-Feld)
                     if !self.gba.icons_inv.contains_key(i) {
                         if let (Some(hud), Some(ring)) = (self.gba.icons_rgba.get(i), self.gba.ring_raw.as_ref()) {
-                            let mut out = super::item_from_b(hud, ring, self.gba.item_off.unwrap_or((1, 4)));
+                            let mut out = super::item_from_b(hud, ring, self.gba.item_off.unwrap_or((1, 4)), super::minish::COUNTED.contains(i));
                             super::clean_counted(&mut out, *i);
                             self.gba.icons_inv.insert(*i, out);
                             self.gba.inv_tex.clear();
@@ -957,6 +961,8 @@ impl App {
     /// Spielbild im GBA-Modus (3:2, auf Wunsch ganzzahlig vergrößert oder gestreckt)
     pub(crate) fn gba_view(&mut self, painter: &gfx::Painter, area: gfx::Rect, ctx: &gfx::Context) {
         let en = self.s.ui_en;
+        // Spielfläche für Menüs über dem Spiel (Spielstände): sonst stünde dort die Fläche von A Link to the Past
+        self.game_area = area;
         // Recomp (Picori): die Breite der Spielansicht folgt dem gewählten Seitenverhältnis (echtes Breitbild)
         if let Some(g) = self.gba.game.as_mut() {
             let (vw, vh) = match self.s.widescreen {
@@ -1024,8 +1030,10 @@ impl App {
         }
         let gp_game = r.width() / gw;
         self.gba_draw_y(painter, r, gp_game);
-        // eigene Karte über dem Spielbild (ganze Fläche)
-        self.gba_map_draw(area, ctx);
+        // eigene Karte über dem Spielbild (ganze Fläche) – oder im eigenen Fenster
+        if !self.s.map_own_window {
+            self.gba_map_draw(area, ctx);
+        }
         let gold = Color32::from_rgb(235, 200, 90);
         let ind = if self.turbo_on {
             Some(format!("⏩ TURBO ×{:.0}", self.s.turbo_speed))
@@ -1046,7 +1054,8 @@ impl App {
             painter.rect_stroke(br, 0.0, Stroke::new(gp, Color32::WHITE));
             crate::pixfont::text(painter, tr_, gfx::Align2::RIGHT_TOP, &txt, gp, gold);
         }
-        if self.paused || self.auto_paused {
+        // „PAUSE“ nicht unter offenen Menüs (Spielstände, Karte) – dort halb verdeckt
+        if (self.paused || self.auto_paused) && !self.win_states && !self.gba.map.open {
             crate::pixfont::text(painter, area.center(), gfx::Align2::CENTER_CENTER, tr(en, "PAUSE", "PAUSED"), (gp_game * 2.0).round().max(2.0), Color32::WHITE);
         }
         if self.s.show_fps {

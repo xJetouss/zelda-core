@@ -110,7 +110,37 @@ pub struct MapUi {
     quest_sel: usize,
     /// Gebietsnamen aus Picori
     area_names: HashMap<u8, String>,
+    /// Fadenkreuz (Abstand zur Kartenmitte, Bildschirmpunkte) und halbe Kartengröße – wie bei A Link to the Past
+    cur: gfx::Vec2,
+    half: gfx::Vec2,
+    /// Anzeige (X): 0 Übersicht, 1 Sammeln, 2 Alles, 3 Geholt, 4 Schnellreise
+    filter: u8,
+    /// eigene Markierungen (Raum, x, y, Symbol) und besuchte Räume (Schnellreise), gespeichert in `<rom>.tmcpins`
+    pins: Vec<(Space, f32, f32, u8)>,
+    visited: std::collections::BTreeSet<(u8, u8)>,
+    pins_dirty: bool,
+    /// Markierung wird gesetzt: Raum, Position, gewähltes Symbol
+    pin_pick: Option<(Space, f32, f32, u8)>,
+    /// Auswahl unter dem Fadenkreuz
+    sel: Option<Sel>,
+    /// Schnellreise läuft: Gebiet, Raum, Ziel im Raum, Schritt, Zähler
+    travel: Option<(u8, u8, i32, i32, u8, u32)>,
+    /// Raum-Rechtecke je (Gebiet, Raum) für Schnellreise-Punkte, Namen der Oberwelt-Gebiete (Mitte)
+    rects: HashMap<(u8, u8), ([i32; 4], Space)>,
+    labels: Vec<(String, f32, f32)>,
 }
+
+/// Auswahl auf der Karte
+#[derive(Clone, Copy, PartialEq)]
+enum Sel {
+    Loc(usize),
+    Travel(u8, u8),
+    Pin(usize),
+}
+
+/// Symbole für eigene Markierungen (wie bei A Link to the Past)
+const PIN_ICONS: [Icon; 5] = [Icon::Star, Icon::Quest, Icon::Question, Icon::Cross, Icon::Heart];
+const DOOR: Color32 = Color32::from_rgb(80, 216, 224);
 
 impl Default for MapUi {
     fn default() -> Self {
@@ -143,6 +173,17 @@ impl Default for MapUi {
             progress: Vec::new(),
             quest_sel: 0,
             area_names: HashMap::new(),
+            cur: gfx::Vec2::ZERO,
+            half: gfx::vec2(200.0, 150.0),
+            filter: 0,
+            pins: Vec::new(),
+            visited: Default::default(),
+            pins_dirty: false,
+            pin_pick: None,
+            sel: None,
+            travel: None,
+            rects: HashMap::new(),
+            labels: Vec::new(),
         }
     }
 }
@@ -198,7 +239,8 @@ impl App {
                 let scripted = key & 0x8000_0000 != 0;
                 let (area, room) = if scripted { (0xFF, 0xFF) } else { ((key >> 16) as u8, (key >> 8) as u8) };
                 let at = if scripted {
-                    None
+                    // per Skript vergeben, aber in Hyrule-Stadt (Herzteil an der Glocke, Truhe der Simulation)
+                    name.starts_with("Town_").then(|| g.room_rect(2, 0)).flatten().map(|r| (0, r[0] as f32 + r[2] as f32 * 0.5, r[1] as f32 + r[3] as f32 * if name.contains("Bell") { 0.3 } else { 0.5 }))
                 } else {
                     g.room_rect(area, room).map(|r| (space_of(area, g.area_kind(area)), r[0] as f32 + r[2] as f32 * 0.5, r[1] as f32 + r[3] as f32 * 0.5))
                 };
@@ -211,6 +253,32 @@ impl App {
             // Gebietsnamen: häufigster Namensanfang der Fundorte darin („Deepwood_…“ → Deepwood)
             m.names = by_area.into_iter().filter_map(|(a, c)| c.into_iter().max_by_key(|x| x.1).map(|(n, _)| (a, pretty(&n)))).collect();
             m.area_names = (0u8..0x90).filter_map(|a| g.area_name(a).map(|n| (a, n.0))).collect();
+            // Räume aller Gebiete (Schnellreise-Punkte) und Namen der Oberwelt-Gebiete in deren Mitte
+            m.rects.clear();
+            m.labels.clear();
+            for a in 0u8..0x90 {
+                let kind = g.area_kind(a);
+                // Name in die Mitte des größten Raums des Gebiets
+                let mut bb: Option<[i32; 4]> = None;
+                for r in 0..g.room_count(a).clamp(0, 0x40) as u8 {
+                    if let Some(rr) = g.room_rect(a, r) {
+                        let sp = space_of(a, kind);
+                        m.rects.insert((a, r), (rr, sp));
+                        if sp == 0 && bb.is_none_or(|b| b[2] * b[3] < rr[2] * rr[3]) {
+                            bb = Some(rr);
+                        }
+                    }
+                }
+                if let (Some(b), Some(n)) = (bb, m.area_names.get(&a)) {
+                    // Sonderfassungen (Stadt beim Fest) liegen mit falschen Koordinaten auf anderen Gebieten
+                    if b[2] >= 200 && !n.contains("Festival") {
+                        m.labels.push((n.clone(), b[0] as f32 + b[2] as f32 * 0.5, b[1] as f32 + b[3] as f32 * 0.5));
+                    }
+                }
+            }
+            let (pins, visited) = load_pins(&g.path);
+            m.pins = pins;
+            m.visited = visited;
             d.locs_loaded = true;
             m.data = Some(d);
             m.rom = Some(g.path.clone());
@@ -231,11 +299,32 @@ impl App {
             }
             return;
         }
-        // Link und Ausschnitt
+        // Link und Ausschnitt; besuchte Räume (Schnellreise)
         let view = g.map_view();
         if let Some(v) = view {
             let sp = space_of(v[0] as u8, g.area_kind(v[0] as u8));
             m.link = Some((sp, v[9] as f32, v[10] as f32));
+            if self.gba.hud && m.visited.insert((v[0] as u8, v[1] as u8)) {
+                m.pins_dirty = true;
+            }
+        }
+        // Schnellreise: springen, auf das Ende des Übergangs warten, Link auf eine freie Stelle stellen
+        if let Some((a, r, x, y, step, n)) = m.travel {
+            let n = n + 1;
+            m.travel = match step {
+                0 if g.travel(a, r, x, y) => Some((a, r, x, y, 1, 0)),
+                0 if n < 300 => Some((a, r, x, y, 0, n)),
+                1 if view.is_some_and(|v| v[0] == a as i32 && v[1] == r as i32) && n > 20 => {
+                    g.place_safe();
+                    None
+                }
+                1 if n < 900 => Some((a, r, x, y, 1, n)),
+                _ => None,
+            };
+        }
+        if m.pins_dirty {
+            m.pins_dirty = false;
+            save_pins(&g.path, &m.pins, &m.visited);
         }
         // gesehene Gebiete eintragen: Bild ohne Figuren an seiner Weltposition (nur im Raum, nur im Spiel)
         let tick = self.gba.play_frames;
@@ -429,6 +518,21 @@ impl App {
         }
         let pressed = pad & !m.prev_pad;
         m.prev_pad = pad;
+        // Markierung setzen: ←/→ Symbol, A setzen, B abbrechen
+        if let Some((sp, x, y, sym)) = m.pin_pick {
+            let d = self.gba_map_rep(pad, dt);
+            let m = &mut self.gba.map;
+            let sym = (sym as i32 + d.0).rem_euclid(PIN_ICONS.len() as i32) as u8;
+            m.pin_pick = Some((sp, x, y, sym));
+            if pressed & A != 0 {
+                m.pins.push((sp, x, y, sym));
+                m.pin_pick = None;
+                m.pins_dirty = true;
+            } else if pressed & (B | START) != 0 {
+                m.pin_pick = None;
+            }
+            return;
+        }
         if pressed & B != 0 {
             self.gba_map_close(false);
             return;
@@ -468,51 +572,59 @@ impl App {
         }
         let tab = self.gba.map.tab;
         if tab <= 1 {
+            // X: Anzeige wechseln (wie Y bei A Link to the Past)
             if pressed & X != 0 {
-                self.gba.map.spoiler = !self.gba.map.spoiler;
+                self.gba.map.filter = (self.gba.map.filter + 1) % 5;
             }
-            if pressed & Y != 0 {
-                // Y: zu Link (im Gebiet-Reiter auch in Links Gebiet wechseln)
-                if tab == 1 {
-                    if let Some(l) = self.gba.map.link.filter(|l| l.0 != 0) {
-                        self.gba.map.space = l.0;
-                    }
-                }
-                self.gba_map_center_link();
-            }
-            if tab == 1 && pressed & A != 0 {
-                // A: nächster Dungeon/Raum
+            // Y: nächster Dungeon/Raum
+            if tab == 1 && pressed & Y != 0 {
                 let v = self.gba_map_spaces();
                 if !v.is_empty() {
                     let i = v.iter().position(|&s| s == self.gba.map.space).map_or(0, |i| (i + 1) % v.len());
                     self.gba.map.space = v[i];
+                    self.gba.map.cur = gfx::Vec2::ZERO;
                 }
+            }
+            if pressed & A != 0 {
+                self.gba_map_activate();
+                return;
             }
             let sp = self.gba_map_space();
             let ls = self.lstick;
             let rs = self.rstick;
-            let mut mv = gfx::vec2(0.0, 0.0);
+            let mut v = gfx::vec2(ls.x, -ls.y);
             if pad & LEFT != 0 {
-                mv.x -= 1.0;
+                v.x -= 1.0;
             }
             if pad & RIGHT != 0 {
-                mv.x += 1.0;
+                v.x += 1.0;
             }
             if pad & UP != 0 {
-                mv.y -= 1.0;
+                v.y -= 1.0;
             }
             if pad & DOWN != 0 {
-                mv.y += 1.0;
+                v.y += 1.0;
             }
-            mv += gfx::vec2(ls.x, -ls.y);
+            if v.length() > 1.0 {
+                v = v.normalized();
+            }
             let m = &mut self.gba.map;
+            let half = m.half;
             if let Some((c, z)) = m.views.get_mut(&sp) {
-                if mv.length() > 0.05 {
-                    // gleich schnell auf dem Bildschirm, egal wie weit hereingezoomt
-                    *c += mv * dt * 520.0 / z.max(0.05);
+                let zoom = z.max(0.05);
+                // Fadenkreuz frei bewegen; am Rand (65 %) schiebt es die Karte mit – wie bei A Link to the Past
+                if v != gfx::Vec2::ZERO {
+                    m.cur += v * half.y.max(80.0) * 1.3 * dt;
+                    let lim = half * 0.65;
+                    let over = m.cur - gfx::vec2(m.cur.x.clamp(-lim.x, lim.x), m.cur.y.clamp(-lim.y, lim.y));
+                    *c += over / zoom;
+                    m.cur -= over;
                 }
                 if rs.y.abs() > 0.2 {
-                    *z = (*z * (rs.y * dt * 2.2).exp()).clamp(0.05, 8.0);
+                    // um das Fadenkreuz herum zoomen
+                    let at = *c + m.cur / zoom;
+                    *z = (*z * (rs.y * dt * 2.2).exp()).clamp(0.05, 16.0);
+                    *c = at - m.cur / z.max(0.05);
                 }
             }
         } else if tab == 2 {
@@ -742,10 +854,7 @@ impl App {
             let info2 = self.fit_text(&painter, &info2, fs * 0.75, maxw);
             self.mtext(&painter, gfx::pos2(inner.left() + fs * 0.4, fy + fs * 1.35), gfx::Align2::LEFT_TOP, &info2, fs * 0.75, Color32::from_gray(185));
         }
-        if tab <= 1 {
-            let view = if self.gba.map.spoiler { tr(en, "ALLES", "ALL") } else { tr(en, "GEHOLT", "COLLECTED") };
-            self.mtext(&painter, gfx::pos2(pr.right(), pr.bottom() + fs * 0.25), gfx::Align2::RIGHT_TOP, &format!("{}: {view}", tr(en, "ANSICHT", "VIEW")), fs * 0.7, Color32::from_gray(200));
-        }
+
         // ---- Maus: Rad = Zoom, Ziehen = verschieben
         if tab <= 1 {
             let (scroll, pos, drag) = ctx.input(|i| (i.smooth_scroll_delta.y, i.pointer.hover_pos(), if i.pointer.primary_down() { i.pointer.delta() } else { gfx::Vec2::ZERO }));
@@ -759,23 +868,36 @@ impl App {
                         *c -= drag / z.max(0.05);
                     }
                 }
+                if ctx.input(|i| i.pointer.primary_clicked()) {
+                    self.gba_map_activate();
+                }
             }
         }
         self.game_px = old_px;
     }
 
-    /// Reiter Oberwelt/Gebiet: Bild aus den gesehenen Räumen, Fundorte, Link
+    /// Reiter Oberwelt / Dungeon-Räume: Kartenbild, Fundorte, Schnellreise-Punkte, Markierungen, Link, Fadenkreuz
     fn gba_draw_world(&mut self, ctx: &gfx::Context, p: &gfx::Painter, r: gfx::Rect, fs: f32) -> (String, String) {
         let en = self.s.ui_en;
         let gp = self.game_px;
         let sp = self.gba_map_space();
         let space_name = self.gba_space_name(sp);
         let t = ctx.input(|i| i.time) as f32;
+        // Maus: Zeiger = Fadenkreuz
+        if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
+            if r.contains(pos) && ctx.input(|i| i.pointer.delta().length() > 0.0) {
+                self.gba.map.cur = pos - r.center();
+            }
+        }
         let m = &mut self.gba.map;
+        m.half = r.size() * 0.5;
         let Some(d) = m.data.as_mut() else { return (String::new(), String::new()) };
-        // Texturen der geänderten Kacheln (wenige je Bild, damit nichts ruckelt)
+        // Texturen der geänderten Kacheln (einige je Bild, damit nichts ruckelt)
         let mut n = 0;
         while let Some(k) = d.dirty.pop() {
+            if k.0 == 0xFFFF {
+                continue;
+            }
             if let Some(px) = d.chunks.get(&k) {
                 let img = gfx::ColorImage::from_rgba_unmultiplied([CH, CH], px);
                 match m.tex.get_mut(&k) {
@@ -787,7 +909,7 @@ impl App {
                 }
             }
             n += 1;
-            if n >= 12 {
+            if n >= 24 {
                 break;
             }
         }
@@ -804,7 +926,6 @@ impl App {
         let fit = (r.width() / (bx1 - bx0).max(64.0)).min(r.height() / (by1 - by0).max(64.0)) * 0.95;
         let v = m.views.entry(sp).or_insert((gfx::vec2(0.0, 0.0), 0.0));
         if v.1 <= 0.0 {
-            // Oberwelt: ganz zeigen (Y springt zu Link); Gebiet: ganz, höchstens doppelte Größe
             v.1 = if sp == 0 { fit } else { fit.min(gp * 2.0) };
             v.0 = match link {
                 Some(l) if sp != 0 => gfx::vec2(l.1, l.2),
@@ -815,8 +936,9 @@ impl App {
         v.0.x = v.0.x.clamp(bx0, bx1);
         v.0.y = v.0.y.clamp(by0, by1);
         let (c, z) = *v;
+        let overview = z < fit * 1.8;
         let to_screen = |x: f32, y: f32| r.center() + (gfx::vec2(x, y) - c) * z;
-        // Hintergrund: Raster für noch nicht Gesehenes
+        // Hintergrund: Raster
         p.rect_filled(r, 0.0, Color32::from_rgb(14, 18, 40));
         let step = (16.0 * z).max(gp * 6.0);
         let mut gx = r.left() - (c.x * z - r.width() * 0.5).rem_euclid(step);
@@ -840,89 +962,162 @@ impl App {
                 p.image(tx.id(), rr, uv, Color32::WHITE);
             }
         }
-        let empty = d.chunks.keys().all(|k| k.0 != sp);
-        // Fundorte
+        // Symbole sammeln: (Position, Auswahl, Symbol, Farbe, Punkt in der Übersicht)
         let rad = fs * 0.55;
-        let spoiler = m.spoiler;
-        let mut marks: Vec<(gfx::Pos2, usize)> = Vec::new();
-        for (i, l) in d.locs.iter().enumerate() {
-            let Some(at) = l.at.filter(|a| a.0 == sp) else { continue };
-            if !spoiler && l.done != Some(true) {
-                continue;
-            }
-            marks.push((to_screen(at.1, at.2), i));
-        }
-        // Symbole am selben Ort im Kreis verteilen (wie bei A Link to the Past)
-        let mut groups: Vec<Vec<usize>> = Vec::new();
-        for k in 0..marks.len() {
-            match groups.iter_mut().find(|gr| marks[gr[0]].0.distance(marks[k].0) < rad * 1.4) {
-                Some(gr) => gr.push(k),
-                None => groups.push(vec![k]),
-            }
-        }
-        for gr in groups.iter().filter(|gr| gr.len() > 1) {
-            let cc = gr.iter().fold(gfx::Vec2::ZERO, |a, &k| a + marks[k].0.to_vec2()) / gr.len() as f32;
-            let nn = gr.len() as f32;
-            let dd = rad * (0.75 + 0.18 * nn);
-            for (j, &k) in gr.iter().enumerate() {
-                let a = std::f32::consts::TAU * j as f32 / nn - std::f32::consts::FRAC_PI_2;
-                marks[k].0 = (cc + gfx::vec2(a.cos(), a.sin()) * dd).to_pos2();
+        let filt = m.filter;
+        let show_locs = filt != 4;
+        let show_travel = filt == 0 || filt == 2 || filt == 4;
+        let mut marks: Vec<(gfx::Pos2, Sel, Icon, Color32, bool)> = Vec::new();
+        if show_locs {
+            for (i, l) in d.locs.iter().enumerate() {
+                let Some(at) = l.at.filter(|a| a.0 == sp) else { continue };
+                let done = l.done == Some(true);
+                let show = match filt {
+                    0 => matches!(l.kind, LocKind::HeartPiece) || !done,
+                    1 => !done,
+                    3 => done,
+                    _ => true,
+                };
+                if !show {
+                    continue;
+                }
+                let (icon, col) = kind_look(l.kind);
+                // fehlt noch = Farbe der Art (das sucht man), geholt = grau
+                marks.push((to_screen(at.1, at.2), Sel::Loc(i), icon, if done { GREYC } else { col }, true));
             }
         }
-        let aim = r.center();
-        let sel = marks.iter().filter(|mk| mk.0.distance(aim) < rad * 3.0).min_by(|a, b| a.0.distance(aim).total_cmp(&b.0.distance(aim))).map(|mk| mk.1);
-        m.pick = sel;
-        let link_pos = link.map(|l| to_screen(l.1, l.2));
-        let mut draw: Vec<(gfx::Pos2, Icon, Color32, bool, bool)> = Vec::new();
-        for (pos, i) in &marks {
-            if !r.expand(rad * 2.0).contains(*pos) {
-                continue;
+        if show_travel {
+            for &(a, rm) in &m.visited {
+                if let Some((rr, s)) = m.rects.get(&(a, rm)) {
+                    if *s == sp {
+                        marks.push((to_screen(rr[0] as f32 + rr[2] as f32 * 0.5, rr[1] as f32 + rr[3] as f32 * 0.5), Sel::Travel(a, rm), Icon::Door, DOOR, false));
+                    }
+                }
             }
-            let l = &d.locs[*i];
-            let (icon, col) = kind_look(l.kind);
-            draw.push((*pos, icon, col, l.done == Some(true), Some(*i) == sel));
         }
-        let info = match sel.and_then(|i| d.locs.get(i)) {
-            Some(l) => {
+        for (i, pn) in m.pins.iter().enumerate() {
+            if pn.0 == sp {
+                marks.push((to_screen(pn.1, pn.2), Sel::Pin(i), PIN_ICONS[pn.3 as usize % PIN_ICONS.len()], Color32::from_rgb(255, 200, 60), false));
+            }
+        }
+        // Symbole am selben Ort im Kreis verteilen (wie bei A Link to the Past), nicht in der Übersicht
+        if !overview {
+            let mut groups: Vec<Vec<usize>> = Vec::new();
+            for k in 0..marks.len() {
+                match groups.iter_mut().find(|gr| marks[gr[0]].0.distance(marks[k].0) < rad * 1.4) {
+                    Some(gr) => gr.push(k),
+                    None => groups.push(vec![k]),
+                }
+            }
+            for gr in groups.iter().filter(|gr| gr.len() > 1) {
+                let cc = gr.iter().fold(gfx::Vec2::ZERO, |a, &k| a + marks[k].0.to_vec2()) / gr.len() as f32;
+                let nn = gr.len() as f32;
+                let dd = rad * (0.75 + 0.18 * nn);
+                for (j, &k) in gr.iter().enumerate() {
+                    let a = std::f32::consts::TAU * j as f32 / nn - std::f32::consts::FRAC_PI_2;
+                    marks[k].0 = (cc + gfx::vec2(a.cos(), a.sin()) * dd).to_pos2();
+                }
+            }
+        }
+        // Fadenkreuz: Auswahl = nächstes Symbol
+        m.cur = gfx::vec2(m.cur.x.clamp(-r.width() * 0.5, r.width() * 0.5), m.cur.y.clamp(-r.height() * 0.5, r.height() * 0.5));
+        let aim = r.center() + m.cur;
+        let sel = marks.iter().filter(|mk| mk.0.distance(aim) < rad * 1.6).min_by(|a, b| a.0.distance(aim).total_cmp(&b.0.distance(aim))).map(|mk| mk.1);
+        m.sel = if m.pin_pick.is_some() { None } else { sel };
+        let pin_pick = m.pin_pick;
+        let labels: Vec<(String, gfx::Pos2)> = if sp == 0 && overview { m.labels.iter().map(|(n, x, y)| (n.to_uppercase(), to_screen(*x, *y))).collect() } else { Vec::new() };
+        let info = match sel {
+            Some(Sel::Loc(i)) => d.locs.get(i).map(|l| {
                 let st = match l.done {
                     Some(true) => tr(en, "geholt", "collected"),
                     Some(false) => tr(en, "fehlt noch", "still missing"),
                     None => tr(en, "Stand unbekannt", "state unknown"),
                 };
                 (pretty(&l.name), format!("{} – {st}", l.kind.label(en)))
-            }
-            None => {
-                let here = d.locs.iter().filter(|l| l.at.is_some_and(|a| a.0 == sp) && l.done.is_some());
-                let (a, n) = here.fold((0, 0), |s, l| (s.0 + (l.done == Some(true)) as usize, s.1 + 1));
-                (format!("{space_name}  {a}/{n}"), String::new())
-            }
-        };
-        // ab hier nur noch zeichnen (braucht &self)
-        if empty {
-            let txt = tr(en, "NOCH NICHT ERKUNDET – DIE KARTE FÜLLT SICH BEIM SPIELEN", "NOT EXPLORED YET – THE MAP FILLS IN AS YOU PLAY");
-            let mut px = (fs * 0.75 / 8.0).round().max(1.0);
-            while px > 1.0 && crate::pixfont::width(txt, px) > r.width() * 0.9 {
-                px -= 1.0;
-            }
-            crate::pixfont::text(p, r.center_bottom() - gfx::vec2(0.0, fs * 0.8), gfx::Align2::CENTER_BOTTOM, txt, px, Color32::from_gray(190));
+            }),
+            Some(Sel::Travel(a, _)) => Some((
+                format!("{} {}", tr(en, "SCHNELLREISE:", "FAST TRAVEL:"), m.area_names.get(&a).cloned().unwrap_or_default()),
+                tr(en, "A: hinreisen", "A: travel there").to_string(),
+            )),
+            Some(Sel::Pin(_)) => Some((tr(en, "EIGENE MARKIERUNG", "OWN MARKER").to_string(), tr(en, "A: entfernen", "A: remove").to_string())),
+            _ => None,
         }
-        for (pos, icon, col, done, s) in draw {
-            paint_icon(p, pos, if s { rad * 1.15 } else { rad * 0.85 }, icon, if done { col } else { GREYC });
-            if done {
-                paint_icon(p, pos + gfx::vec2(rad * 0.7, rad * 0.6), rad * 0.45, Icon::Check, Color32::WHITE);
+        .unwrap_or_else(|| {
+            let here = d.locs.iter().filter(|l| l.at.is_some_and(|a| a.0 == sp) && l.done.is_some());
+            let (a, n) = here.fold((0, 0), |s, l| (s.0 + (l.done == Some(true)) as usize, s.1 + 1));
+            (format!("{space_name}  {a}/{n}"), String::new())
+        });
+        // ---- zeichnen
+        for (name, pos) in &labels {
+            if r.contains(*pos) {
+                let w = crate::pixfont::width(name, gp);
+                let br = gfx::Rect::from_center_size(*pos, gfx::vec2(w + gp * 6.0, gp * 11.0));
+                p.rect_filled(br, 0.0, Color32::from_black_alpha(150));
+                crate::pixfont::text(p, *pos, gfx::Align2::CENTER_CENTER, name, gp, Color32::from_rgb(255, 240, 200));
             }
         }
-        // Fadenkreuz in der Mitte
-        let ch = fs * 0.45;
-        for (o, s) in [(gfx::vec2(-ch, 0.0), gfx::vec2(ch * 0.7, gp)), (gfx::vec2(ch * 0.3, 0.0), gfx::vec2(ch * 0.7, gp)), (gfx::vec2(0.0, -ch), gfx::vec2(gp, ch * 0.7)), (gfx::vec2(0.0, ch * 0.3), gfx::vec2(gp, ch * 0.7))] {
-            let a = aim + o - if s.x > s.y { gfx::vec2(0.0, gp * 0.5) } else { gfx::vec2(gp * 0.5, 0.0) };
-            p.rect_filled(gfx::Rect::from_min_size(a, s).expand(gp), 0.0, Color32::from_black_alpha(160));
-            p.rect_filled(gfx::Rect::from_min_size(a, s), 0.0, Color32::WHITE);
+        for (pos, s_, icon, col, dot) in &marks {
+            if !r.expand(rad * 2.0).contains(*pos) {
+                continue;
+            }
+            let s = Some(*s_) == sel;
+            if overview && *dot && !s {
+                // Übersicht: kleiner Punkt in der Farbe der Art
+                let dd = gp * 4.0;
+                p.rect_filled(gfx::Rect::from_center_size(*pos, gfx::vec2(dd + gp * 2.0, dd + gp * 2.0)), 0.0, Color32::from_rgb(16, 16, 24));
+                p.rect_filled(gfx::Rect::from_center_size(*pos, gfx::vec2(dd, dd)), 0.0, *col);
+                continue;
+            }
+            paint_icon(p, *pos, if s { rad * 1.15 } else { rad * 0.85 }, *icon, *col);
         }
         // Link (blinkt leicht)
-        if let Some(lp) = link_pos {
+        if let Some(l) = link {
+            let lp = to_screen(l.1, l.2);
             if r.contains(lp) && (t * 3.0) as i64 % 4 != 0 {
                 self.link_dot(p, lp, gp, rad * 0.6);
+            }
+        }
+        // Fadenkreuz wie bei A Link to the Past
+        let ch = fs * 0.45;
+        for (o, sz) in [(gfx::vec2(-ch, 0.0), gfx::vec2(ch * 0.7, gp)), (gfx::vec2(ch * 0.3, 0.0), gfx::vec2(ch * 0.7, gp)), (gfx::vec2(0.0, -ch), gfx::vec2(gp, ch * 0.7)), (gfx::vec2(0.0, ch * 0.3), gfx::vec2(gp, ch * 0.7))] {
+            let a = aim + o - if sz.x > sz.y { gfx::vec2(0.0, gp * 0.5) } else { gfx::vec2(gp * 0.5, 0.0) };
+            p.rect_filled(gfx::Rect::from_min_size(a, sz).expand(gp), 0.0, Color32::from_black_alpha(160));
+            p.rect_filled(gfx::Rect::from_min_size(a, sz), 0.0, Color32::WHITE);
+        }
+        // Markierung setzen: Symbolauswahl am Fadenkreuz
+        if let Some((_, _, _, sym)) = pin_pick {
+            let cell = fs * 1.4;
+            let br = gfx::Rect::from_center_size(aim + gfx::vec2(0.0, -fs * 1.8), gfx::vec2(cell * PIN_ICONS.len() as f32 + fs * 0.6, cell + fs * 0.4));
+            p.rect_filled(br.expand(gp), 0.0, Color32::BLACK);
+            p.rect_filled(br, 0.0, Color32::from_rgb(10, 12, 32));
+            p.rect_stroke(br, 0.0, Stroke::new(gp, GOLD));
+            for (k, ic) in PIN_ICONS.iter().enumerate() {
+                let cc = gfx::pos2(br.left() + fs * 0.3 + cell * (k as f32 + 0.5), br.center().y);
+                if k as u8 == sym {
+                    p.rect_stroke(gfx::Rect::from_center_size(cc, gfx::vec2(cell * 0.9, cell * 0.9)), 0.0, Stroke::new(gp, Color32::WHITE));
+                }
+                paint_icon(p, cc, fs * 0.45, *ic, if k as u8 == sym { Color32::from_rgb(255, 200, 60) } else { GREYC });
+            }
+        }
+        // Anzeige oben rechts (X wechselt)
+        {
+            let names_de = ["ÜBERSICHT", "SAMMELN", "ALLES", "GEHOLT", "SCHNELLREISE"];
+            let names_en = ["OVERVIEW", "COLLECT", "ALL", "COLLECTED", "FAST TRAVEL"];
+            let txt = format!("X  {}", if en { names_en[filt as usize] } else { names_de[filt as usize] });
+            let small = fs * 0.75;
+            let tw = self.text_w(p, &txt, small);
+            let br = gfx::Rect::from_min_size(gfx::pos2(r.right() - tw - fs * 1.6, r.top() + fs * 0.4), gfx::vec2(tw + fs * 1.2, fs * 1.3));
+            p.rect_filled(br, 0.0, Color32::from_black_alpha(200));
+            p.rect_stroke(br, 0.0, Stroke::new(gp, crate::inventory::MENU_LINE));
+            self.mtext(p, br.center(), gfx::Align2::CENTER_CENTER, &txt, small, crate::inventory::MENU_LINE);
+            if sp != 0 {
+                // Name des Raums oben links (Y wechselt)
+                let txt = format!("Y  {}", space_name.to_uppercase());
+                let tw = self.text_w(p, &txt, small);
+                let bl = gfx::Rect::from_min_size(gfx::pos2(r.left() + fs * 0.4, r.top() + fs * 0.4), gfx::vec2(tw + fs * 1.2, fs * 1.3));
+                p.rect_filled(bl, 0.0, Color32::from_black_alpha(200));
+                p.rect_stroke(bl, 0.0, Stroke::new(gp, crate::inventory::MENU_LINE));
+                self.mtext(p, bl.center(), gfx::Align2::CENTER_CENTER, &txt, small, crate::inventory::MENU_LINE);
             }
         }
         info
@@ -1082,5 +1277,84 @@ impl App {
         }
         let (a, n) = self.gba_quest_score();
         (format!("Quests  {:.0} %", a / n.max(1.0) * 100.0), String::new())
+    }
+}
+
+/// eigene Markierungen und besuchte Räume laden (`<rom>.tmcpins`: „p Raum x y Symbol“, „v Gebiet Raum“)
+fn load_pins(rom: &std::path::Path) -> (Vec<(Space, f32, f32, u8)>, std::collections::BTreeSet<(u8, u8)>) {
+    let mut pins = Vec::new();
+    let mut vis = std::collections::BTreeSet::new();
+    let Ok(t) = std::fs::read_to_string(rom.with_extension("tmcpins")) else { return (pins, vis) };
+    for l in t.lines() {
+        let f: Vec<&str> = l.split_whitespace().collect();
+        match f.as_slice() {
+            ["p", sp, x, y, sym] => {
+                if let (Ok(sp), Ok(x), Ok(y), Ok(sym)) = (sp.parse(), x.parse(), y.parse(), sym.parse()) {
+                    pins.push((sp, x, y, sym));
+                }
+            }
+            ["v", a, r] => {
+                if let (Ok(a), Ok(r)) = (a.parse(), r.parse()) {
+                    vis.insert((a, r));
+                }
+            }
+            _ => {}
+        }
+    }
+    (pins, vis)
+}
+
+fn save_pins(rom: &std::path::Path, pins: &[(Space, f32, f32, u8)], vis: &std::collections::BTreeSet<(u8, u8)>) {
+    let mut t = String::new();
+    for (sp, x, y, sym) in pins {
+        t += &format!("p {sp} {x:.0} {y:.0} {sym}\n");
+    }
+    for (a, r) in vis {
+        t += &format!("v {a} {r}\n");
+    }
+    let _ = std::fs::write(rom.with_extension("tmcpins"), t);
+}
+
+impl App {
+    /// A auf der Karte: Schnellreise, Markierung entfernen oder neue Markierung setzen
+    fn gba_map_activate(&mut self) {
+        let sp = self.gba_map_space();
+        let m = &mut self.gba.map;
+        match m.sel {
+            Some(Sel::Travel(a, r)) => {
+                if let Some((rr, _)) = m.rects.get(&(a, r)) {
+                    m.travel = Some((a, r, rr[2] / 2, rr[3] / 2, 0, 0));
+                    m.open = false;
+                    if let Some(d) = m.data.as_mut() {
+                        d.save();
+                    }
+                    let name = m.area_names.get(&a).cloned().unwrap_or_default();
+                    let t = format!("{} {name}", self.t("Schnellreise:", "Fast travel:"));
+                    self.msg(t);
+                }
+            }
+            Some(Sel::Pin(i)) => {
+                if i < m.pins.len() {
+                    m.pins.remove(i);
+                    m.pins_dirty = true;
+                }
+            }
+            _ => {
+                let (c, z) = m.views.get(&sp).copied().unwrap_or((gfx::Vec2::ZERO, 1.0));
+                let at = c + m.cur / z.max(0.05);
+                m.pin_pick = Some((sp, at.x, at.y, 0));
+            }
+        }
+    }
+}
+
+impl App {
+    /// Karte im eigenen Fenster: dieselbe Darstellung, füllt das ganze Fenster
+    pub(crate) fn gba_map_window(&mut self, ctx: &gfx::Context) {
+        let area = ctx.screen_rect();
+        ctx.layer_painter(gfx::LayerId::background()).rect_filled(area, 0.0, Color32::BLACK);
+        if self.gba.map.open {
+            self.gba_map_draw(area, ctx);
+        }
     }
 }

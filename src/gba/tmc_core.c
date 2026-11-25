@@ -707,3 +707,54 @@ EXPORT int tmc_area_name(int area, char* out, int cap) {
     snprintf(out, (size_t)cap, "%s", n);
     return Port_DebugAction_AreaIsWarpable((unsigned char)area) ? 1 : 2;
 }
+
+extern u32 GetCollisionDataAtWorldCoords(u32 worldX, u32 worldY, u32 layer);
+
+/* Schnellreise (Karte): in einen Raum springen, ohne etwas am Spielstand zu ändern (anders als tmc_warp) */
+EXPORT int tmc_travel(int area, int room, int x, int y) {
+    if (gMain.task != 2 || gMain.substate != GAMEMAIN_UPDATE)
+        return 0;
+    Transition t;
+    memset(&t, 0, sizeof(t));
+    t.warp_type = WARP_TYPE_AREA;
+    t.endX = (u16)x;
+    t.endY = (u16)y;
+    t.area = (u8)area;
+    t.room = (u8)room;
+    t.layer = 1;
+    gRoomTransition.stairs_idx = 0;
+    DoExitTransition(&t);
+    return 1;
+}
+
+/* nach der Ankunft: Link auf die nächste begehbare Stelle stellen (Spirale um die aktuelle Position) */
+EXPORT int tmc_place_safe(void) {
+    if (gMain.task != 2 || gMain.substate != GAMEMAIN_UPDATE)
+        return 0;
+    Entity* p = &gPlayerEntity.base;
+    s32 x0 = p->x.HALF.HI, y0 = p->y.HALF.HI;
+    s32 rx0 = gRoomControls.origin_x + 8, ry0 = gRoomControls.origin_y + 8;
+    s32 rx1 = gRoomControls.origin_x + gRoomControls.width - 8, ry1 = gRoomControls.origin_y + gRoomControls.height - 8;
+    for (s32 r = 0; r < 160; r += 8) {
+        for (s32 dy = -r; dy <= r; dy += 8) {
+            for (s32 dx = -r; dx <= r; dx += 8) {
+                if (dx != -r && dx != r && dy != -r && dy != r)
+                    continue;
+                s32 x = x0 + dx, y = y0 + dy;
+                if (x < rx0 || y < ry0 || x > rx1 || y > ry1)
+                    continue;
+                /* Mitte und die vier Ecken eines 12×12-Felds frei */
+                if (GetCollisionDataAtWorldCoords(x, y, p->collisionLayer) == 0 &&
+                    GetCollisionDataAtWorldCoords(x - 6, y - 6, p->collisionLayer) == 0 &&
+                    GetCollisionDataAtWorldCoords(x + 6, y - 6, p->collisionLayer) == 0 &&
+                    GetCollisionDataAtWorldCoords(x - 6, y + 6, p->collisionLayer) == 0 &&
+                    GetCollisionDataAtWorldCoords(x + 6, y + 6, p->collisionLayer) == 0) {
+                    p->x.HALF.HI = (s16)x;
+                    p->y.HALF.HI = (s16)y;
+                    return 1;
+                }
+            }
+        }
+    }
+    return 0;
+}
