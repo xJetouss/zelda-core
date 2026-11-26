@@ -188,7 +188,7 @@ impl Default for MapUi {
             saved: Instant::now(),
             names: HashMap::new(),
             done_at: Instant::now(),
-            items: (0, 18),
+            items: (0, 17),
             owned: Vec::new(),
             pick: None,
             map_rect: gfx::Rect::NOTHING,
@@ -394,7 +394,7 @@ impl App {
                 }
             }
             m.owned = g.owned_items();
-            m.items = (m.owned.len(), 18);
+            m.items = (m.owned.len(), ITEM_GROUPS.len());
             let p = g.progress();
             if !p.is_empty() {
                 m.progress = p;
@@ -761,7 +761,7 @@ pub(crate) struct ListEntry {
 }
 
 /// Items wie in der Item-Leiste (bei Schwert, Bumerang, Schild zählt jede Stufe als dasselbe Item)
-const ITEM_GROUPS: &[&[u8]] = &[&[6, 5, 4, 3, 2, 1], &[12, 11], &[14, 13], &[7], &[8], &[9], &[15], &[17], &[18], &[19], &[20], &[21], &[22], &[23], &[28], &[29], &[30], &[31]];
+const ITEM_GROUPS: &[&[u8]] = &[&[6, 5, 4, 3, 2, 1], &[12, 11], &[14, 13], &[8, 7], &[9], &[15], &[17], &[18], &[19], &[20], &[21], &[22], &[23], &[28], &[29], &[30], &[31]];
 
 impl App {
     fn gba_list_cat_name(&self, c: usize) -> String {

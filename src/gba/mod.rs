@@ -101,13 +101,13 @@ pub mod minish {
     pub fn owned(inv: &[u8]) -> Vec<u8> {
         let has = |i: u8| inv.get(i as usize >> 2).is_some_and(|b| (b >> ((i & 3) * 2)) & 3 != 0);
         let mut v = Vec::new();
-        // nur die beste Stufe von Schwert, Bumerang, Schild
-        for group in [&[6u8, 5, 4, 3, 2, 1][..], &[12, 11], &[14, 13]] {
+        // nur die beste Stufe von Schwert, Bumerang, Schild und Bomben (Fernzünder ersetzen im Spiel die Bomben)
+        for group in [&[6u8, 5, 4, 3, 2, 1][..], &[12, 11], &[14, 13], &[8, 7]] {
             if let Some(&i) = group.iter().find(|&&i| has(i)) {
                 v.push(i);
             }
         }
-        for &i in &[7u8, 8, 9, 15, 17, 18, 19, 20, 21, 22, 23, 28, 29, 30, 31] {
+        for &i in &[9u8, 15, 17, 18, 19, 20, 21, 22, 23, 28, 29, 30, 31] {
             if has(i) {
                 v.push(i);
             }
@@ -810,6 +810,56 @@ mod running {
         pub fn room_exits(&self) -> Vec<(i32, i32, u8, u8, i32, i32)> {
             self.rc.as_ref().map_or(Vec::new(), |c| c.room_exits())
         }
+        /// Item-Grafiken aus dem Item-Menü des Spiels (ohne Tastenkreis, Flaschen mit Inhalt): Spielstand merken, Menü
+        /// öffnen, alle Items aufnehmen, Spielstand zurück – unsichtbar für den Spieler (nur PC-Fassung)
+        pub fn capture_menu_icons(&mut self) -> std::collections::HashMap<u8, Vec<u8>> {
+            let mut out = std::collections::HashMap::new();
+            if self.rc.is_none() || self.menu_item().is_some() {
+                return out;
+            }
+            let Some(st) = self.save_state() else { return out };
+            let (frame, nf, fr, fw, fh) = (self.frame.clone(), self.new_frame, self.frames, self.w, self.h);
+            // Start drücken, bis das Item-Menü offen und fertig eingeblendet ist
+            let mut open_at = None;
+            for f in 0..240u32 {
+                self.rc_frame(if f % 30 < 3 && open_at.is_none() { 0x1000 } else { 0 }, None);
+                if self.menu_item().is_some() && open_at.is_none() {
+                    open_at = Some(f);
+                }
+                if open_at.is_some_and(|o| f >= o + 45) {
+                    break;
+                }
+            }
+            if open_at.is_some() {
+                let cursor = self.menu_item();
+                if let Some((spr, w, h)) = self.capture_sprites() {
+                    let dx = w.saturating_sub(W) / 2;
+                    for i in self.owned_items() {
+                        // Bomben/Pfeile: daneben steht die Anzahl – die kommen sauberer aus dem B-Feld
+                        if minish::COUNTED.contains(&i) {
+                            continue;
+                        }
+                        let pos = self.menu_pos(i).or_else(|| self.menu_pos(match i { 15 => 16, 16 => 15, x => x }));
+                        if let Some((cx, cy)) = pos {
+                            let img = crop_inv_icon(&spr, w, h, cx + dx, cy, cursor == Some(i));
+                            if img.chunks_exact(4).filter(|p| p[3] != 0).count() > 12 {
+                                out.insert(i, img);
+                            }
+                        }
+                    }
+                }
+            }
+            let mut skip = Vec::new();
+            self.take_audio(&mut skip);
+            self.load_state(&st);
+            self.frame = frame;
+            self.new_frame = nf;
+            self.frames = fr;
+            self.w = fw;
+            self.h = fh;
+            out
+        }
+
         pub fn set_hide_counts(&self, on: bool) {
             if let Some(c) = &self.rc {
                 c.set_hide_counts(on);
@@ -1047,6 +1097,9 @@ impl Gba {
     pub fn run_frame(&mut self, _: u16) {}
     pub fn take_audio(&mut self, _: &mut Vec<i16>) {}
     pub fn reset(&mut self) {}
+    pub fn capture_menu_icons(&mut self) -> std::collections::HashMap<u8, Vec<u8>> {
+        Default::default()
+    }
     pub fn save_state(&self) -> Option<Vec<u8>> {
         None
     }
@@ -1226,6 +1279,55 @@ pub fn slot_from_b_nocount(base: &[u8], hud: &[u8], ring: &[u8], item: u8, off: 
     let mut it = item_from_b(hud, ring, off, true);
     clean_counted(&mut it, item);
     compose_slot(&out, &it, off)
+}
+
+/// Reine Item-Aufnahme (ohne Kreis) auf INV_ICON² zuschneiden: Fenster mittig um die sichtbaren Pixel
+pub fn item_centered(clean: &[u8]) -> Vec<u8> {
+    let none = vec![0u8; clean.len()];
+    item_centered_from_b(clean, &none, None)
+}
+
+/// Item-Grafik (INV_ICON²) aus der B-Aufnahme lösen, ohne festen Versatz: alle Pixel, die zum Item gehören (anders
+/// als der leere Kreis und, wenn vorhanden, auch nach dem Mehrheitsvergleich kein Kreis), dann ein Fenster zentriert
+/// um ihre tatsächliche Ausdehnung – so wird kein Item oben oder seitlich abgeschnitten
+pub fn item_centered_from_b(hud: &[u8], ring: &[u8], bare: Option<&[u8]>) -> Vec<u8> {
+    let keep = |p: usize| {
+        let o = p * 4;
+        hud[o + 3] != 0 && hud[o..o + 4] != ring[o..o + 4] && bare.is_none_or(|b| b[o + 3] != 0)
+    };
+    let (mut x0, mut y0, mut x1, mut y1) = (ICON_W, ICON_H, 0usize, 0usize);
+    for y in 0..ICON_H {
+        for x in 0..ICON_W {
+            if keep(y * ICON_W + x) {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x);
+                y1 = y1.max(y);
+            }
+        }
+    }
+    let s = INV_ICON;
+    let mut out = vec![0u8; s * s * 4];
+    if x1 < x0 {
+        return out;
+    }
+    let (w, h) = (x1 - x0 + 1, y1 - y0 + 1);
+    // Fenster: mittig um das Item (zu groß: von oben links)
+    let ox = x0 as isize - (s as isize - w as isize).max(0) / 2;
+    let oy = y0 as isize - (s as isize - h as isize).max(0) / 2;
+    for y in 0..s {
+        for x in 0..s {
+            let (hx, hy) = (ox + x as isize, oy + y as isize);
+            if hx < 0 || hy < 0 || hx as usize >= ICON_W || hy as usize >= ICON_H {
+                continue;
+            }
+            let p = hy as usize * ICON_W + hx as usize;
+            if keep(p) {
+                out[(y * s + x) * 4..(y * s + x) * 4 + 4].copy_from_slice(&hud[p * 4..p * 4 + 4]);
+            }
+        }
+    }
+    out
 }
 
 /// Item-Grafik (INV_ICON²) aus der B-Aufnahme lösen: was sich vom leeren B-Kreis unterscheidet, im Bereich, in dem
@@ -1948,6 +2050,9 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
             g.run_frame(if f < 3 { 0x1000 } else { 0 });
         }
         assert!(g.menu_item().is_none(), "Item-Menü noch offen");
+        // so baut die Leiste: Item-Menü unsichtbar öffnen und aufnehmen (Spielstand danach zurück)
+        let menu_icons = g.capture_menu_icons();
+        println!("aus dem Item-Menü: {:?}", { let mut k: Vec<u8> = menu_icons.keys().copied().collect(); k.sort(); k });
         let ring = g.capture_icon(0).expect("leeres Feld");
         let mut base = ring.clone();
         super::ui::letter_y(&mut base);
@@ -1999,9 +2104,17 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
                     col.push(if x < TILE_W { tile[y * TILE_W + x] } else { crate::gfx::Color32::from_rgb(255, 0, 255) });
                 }
             }
+            // so baut die Leiste jetzt: reine Item-Aufnahme ohne Kreis, Fenster mittig
+            let clean = menu_icons.get(&i).cloned().unwrap_or_else(|| derived.clone());
+            let tile2 = bar_tile(&clean, false);
+            for y in 0..TILE_H {
+                for x in 0..ICON_W {
+                    col.push(if x < TILE_W { tile2[y * TILE_W + x] } else { crate::gfx::Color32::from_rgb(255, 0, 255) });
+                }
+            }
             cols.push(col);
         }
-        let hh = ICON_H * 2 + TILE_H;
+        let hh = ICON_H * 2 + TILE_H * 2;
         let mut px = Vec::new();
         for y in 0..hh {
             for col in &cols {
@@ -2042,14 +2155,18 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
             g.run_frame(0);
         }
         let to_c = |im: &[u8], o: usize| if im[o + 3] == 0 { crate::gfx::Color32::from_rgb(255, 0, 255) } else { crate::gfx::Color32::from_rgb(im[o], im[o + 1], im[o + 2]) };
+        g.equip(false, 6);
+        for _ in 0..10 {
+            g.run_frame(0);
+        }
         let (bx, by) = g.b_box().unwrap();
         println!("B-Feld bei {bx},{by}, Bild {}x{}", g.w, g.h);
         // echtes Bild: B-Feld mit 8 Pixel Rand
-        let (rw, rh) = (ICON_W + 16, ICON_H + 16);
+        let (rw, rh) = (ICON_W + 16, ICON_H + 32);
         let mut img = Vec::new();
         for y in 0..rh {
             for x in 0..rw {
-                let (fx, fy) = (bx - 8 + x as isize, by - 8 + y as isize);
+                let (fx, fy) = (bx - 8 + x as isize, by - 24 + y as isize);
                 img.push(if fx >= 0 && fy >= 0 && (fx as usize) < g.w && (fy as usize) < g.h { let i = (fy as usize * g.w + fx as usize) * 4; crate::gfx::Color32::from_rgb(g.frame[i], g.frame[i + 1], g.frame[i + 2]) } else { crate::gfx::Color32::BLACK });
             }
         }

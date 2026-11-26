@@ -856,7 +856,7 @@ EXPORT int tmc_cheat_complete(void) {
                                   ITEM_POWER_BRACELETS, ITEM_FLIPPERS, ITEM_QST_BOOK1, ITEM_QST_BOOK2, ITEM_QST_BOOK3,
                                   ITEM_QST_TINGLE_TROPHY, ITEM_QST_CARLOV_MEDAL, ITEM_QST_LONLON_KEY,
                                   ITEM_QST_GRAVEYARD_KEY, ITEM_LIGHT_ARROW, ITEM_MIRROR_SHIELD, ITEM_MAGIC_BOOMERANG,
-                                  ITEM_BOMBS, ITEM_REMOTE_BOMBS, ITEM_BOW };
+                                  ITEM_REMOTE_BOMBS, ITEM_BOW };
     for (unsigned i = 0; i < sizeof(kQuest) / sizeof(kQuest[0]); i++)
         if (GetInventoryValue(kQuest[i]) == 0)
             SetInventoryValue(kQuest[i], 1);
@@ -917,3 +917,4 @@ void TmcCore_UpdateHideCounts(void) {
     const u8* eq = Resolve(0x02002AF4u, 2);
     gTmcCoreHideCounts = sHideCountsOn && eq != NULL && (IsCountedItem(eq[0]) || IsCountedItem(eq[1]));
 }
+

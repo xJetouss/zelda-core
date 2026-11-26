@@ -144,3 +144,25 @@ fn main() {
         cx.activate(true);
     });
 }
+
+/// Entwicklung: Bild als BMP speichern (auch außerhalb der Tests, z. B. PASTLINK_DUMP_BAR)
+pub fn devtest_bmp(path: &str, w: usize, h: usize, px: &[gfx::Color32]) {
+    let row = (w * 3 + 3) & !3;
+    let mut d = b"BM".to_vec();
+    for v in [(54 + row * h) as u32, 0, 54, 40, w as u32, h as u32] {
+        d.extend_from_slice(&v.to_le_bytes());
+    }
+    d.extend_from_slice(&1u16.to_le_bytes());
+    d.extend_from_slice(&24u16.to_le_bytes());
+    for v in [0u32, (row * h) as u32, 2835, 2835, 0, 0] {
+        d.extend_from_slice(&v.to_le_bytes());
+    }
+    for y in (0..h).rev() {
+        for x in 0..w {
+            let c = px[y * w + x];
+            d.extend_from_slice(&[c.b(), c.g(), c.r()]);
+        }
+        d.resize(d.len() + row - w * 3, 0);
+    }
+    let _ = std::fs::write(path, d);
+}

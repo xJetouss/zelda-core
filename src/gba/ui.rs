@@ -48,6 +48,8 @@ pub struct GbaView {
     bare_dirty: bool,
     /// Item-Grafiken aus dem Item-Menü (24×24, ohne Tastenkreis) – die schönste Quelle für die Item-Leiste
     icons_inv: HashMap<u8, Vec<u8>>,
+    /// reine Item-Grafiken, wie das Spiel sie auf B zeichnet (ohne Tastenkreis) – die beste Quelle für die Leiste
+    icons_clean: HashMap<u8, Vec<u8>>,
     inv_tex: HashMap<u8, gfx::TextureHandle>,
     inv_tex_hd: bool,
     /// Kästchen der Item-Leiste als fertige Bilder (Kästchen + Item, durch den Bildfilter des Spiels): normal / gewählt
@@ -127,6 +129,7 @@ impl Default for GbaView {
             icons_bare: HashMap::new(),
             bare_dirty: false,
             icons_inv: HashMap::new(),
+            icons_clean: HashMap::new(),
             inv_tex: HashMap::new(),
             inv_tex_hd: false,
             tile_tex: HashMap::new(),
@@ -248,6 +251,7 @@ impl App {
         self.gba.icons_menu.clear();
         self.gba.icons_bare.clear();
         self.gba.icons_inv.clear();
+        self.gba.icons_clean.clear();
         self.gba.inv_tex.clear();
         self.gba.y_empty = None;
         self.gba.bar_open = false;
@@ -466,6 +470,16 @@ impl App {
                     }
                 }
             }
+            // Item-Grafiken aus dem Item-Menü des Spiels (die saubersten: ohne Tastenkreis, Flaschen mit Inhalt) –
+            // fehlt eine oder hat man Flaschen (Inhalt wechselt), das Menü unsichtbar kurz öffnen und aufnehmen
+            let need = self.gba.bar_items.iter().any(|i| !super::minish::COUNTED.contains(i) && (!self.gba.icons_clean.contains_key(i) || (28..=31).contains(i)));
+            if g.is_recomp() && need {
+                for (i, img) in g.capture_menu_icons() {
+                    self.gba.icons_clean.insert(i, img.clone());
+                    self.gba.icons_inv.insert(i, img);
+                }
+                self.gba.inv_tex.clear();
+            }
             self.gba.bar_slot = want.unwrap_or(0);
             let cur = match self.gba.bar_slot {
                 1 => g.peek(super::minish::EQUIP_B, 1).map_or(0, |b| b[0]),
@@ -582,8 +596,12 @@ impl App {
                             if out.chunks_exact(4).filter(|p| p[3] != 0).count() > 12 {
                                 // Laterne an/aus sieht gleich aus; Bomben und Fernzünder-Bomben nicht
                                 let key = if item == 16 { 15 } else { item };
-                                self.gba.icons_inv.insert(key, out.clone());
-                                self.gba.icons_inv.insert(item, out);
+                                if !self.gba.icons_clean.contains_key(&key) {
+                                    self.gba.icons_inv.insert(key, out.clone());
+                                }
+                                if !self.gba.icons_clean.contains_key(&item) {
+                                    self.gba.icons_inv.insert(item, out);
+                                }
                             }
                         }
                         self.gba.inv_tex.clear();
@@ -627,6 +645,23 @@ impl App {
             self.gba.tile_tex.clear();
             self.gba.inv_tex.clear();
             self.gba.inv_tex_hd = hd;
+            // Entwicklung: fertige Kästchen als Bild speichern (PASTLINK_DUMP_BAR = Datei)
+            if let Ok(f) = std::env::var("PASTLINK_DUMP_BAR") {
+                let mut ids: Vec<u8> = self.gba.icons_inv.keys().copied().collect();
+                ids.sort();
+                let (tw, th) = (super::TILE_W, super::TILE_H);
+                let mut px = vec![Color32::from_rgb(40, 40, 40); tw * ids.len().max(1) * th];
+                for (k, i) in ids.iter().enumerate() {
+                    let t = super::bar_tile_count(&self.gba.icons_inv[i], false, None);
+                    for y in 0..th {
+                        for x in 0..tw {
+                            px[y * tw * ids.len() + k * tw + x] = t[y * tw + x];
+                        }
+                    }
+                }
+                crate::devtest_bmp(&f, tw * ids.len().max(1), th, &px);
+                eprintln!("Leiste gespeichert: {ids:?}");
+            }
             for (&i, img) in &self.gba.icons_inv {
                 for sel in [false, true] {
                     // keine Anzahl auf den Kästchen (sie verdeckt die Bomben)
@@ -663,21 +698,9 @@ impl App {
                     // genauer: aus der B-Aufnahme minus leerem B-Kreis (wie das Y-Feld)
                     if !self.gba.icons_inv.contains_key(i) {
                         if let (Some(hud), Some(ring)) = (self.gba.icons_rgba.get(i), self.gba.ring_raw.as_ref()) {
-                            let off = self.gba.item_off.unwrap_or((1, 4));
-                            let mut out = super::item_from_b(hud, ring, off, super::minish::COUNTED.contains(i));
-                            // nur, was auch nach dem Mehrheitsvergleich aller Aufnahmen kein Kreis ist: der Kreis mit
-                            // Item ist eine Figur, der leere Kreis eine Hintergrund-Ebene – die Pixel weichen ab
-                            const S: usize = super::INV_ICON;
-                            for y in 0..S {
-                                for x in 0..S {
-                                    let (hx, hy) = (off.0 + x as isize, off.1 + y as isize);
-                                    let gone = hx < 0 || hy < 0 || hx as usize >= super::ICON_W || hy as usize >= super::ICON_H || img[(hy as usize * super::ICON_W + hx as usize) * 4 + 3] == 0;
-                                    if gone {
-                                        out[(y * S + x) * 4 + 3] = 0;
-                                    }
-                                }
-                            }
-                            super::clean_counted(&mut out, *i);
+                            // Item ohne Kreis, Fenster mittig um seine wirkliche Ausdehnung (kein fester Versatz, der bei
+                            // manchen Items oben etwas abschnitt); Kreis-Reste fallen durch den Mehrheitsvergleich weg
+                            let out = super::item_centered_from_b(hud, ring, Some(&img));
                             self.gba.icons_inv.insert(*i, out);
                             self.gba.inv_tex.clear();
                         }
@@ -1157,6 +1180,7 @@ impl App {
             self.gba.icons_menu.clear();
             self.gba.icons_bare.clear();
             self.gba.icons_inv.clear();
+            self.gba.icons_clean.clear();
             self.gba.inv_tex.clear();
             self.gba.tile_tex.clear();
             self.gba.tile_filter = None;
