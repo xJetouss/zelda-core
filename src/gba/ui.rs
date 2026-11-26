@@ -1195,6 +1195,7 @@ impl App {
         let mut pad = 0u16;
         let mut dpad = 0u16;
         let mut map_at = None;
+        let mut cheat_at = None;
         for e in spec.split(',') {
             let Some((k, at)) = e.split_once(':') else { continue };
             let Ok(at) = at.parse::<u32>() else { continue };
@@ -1217,7 +1218,19 @@ impl App {
                 "R" => dpad |= 1 << 8,
                 // Karte (Minus) – einmal je Eintrag
                 "m" => map_at = Some(at),
+                // 100-%-Cheat – einmal je Eintrag
+                "c" => cheat_at = Some(at),
                 _ => {}
+            }
+        }
+        if let Some(at) = cheat_at {
+            if self.gba.map.dev_m != at + 1_000_000 {
+                self.gba.map.dev_m = at + 1_000_000;
+                if let Some(g) = &self.gba.game {
+                    let _ = g.locations(super::tmcmap::LOGIC);
+                    eprintln!("Cheat: {} Fundorte", g.cheat_complete());
+                }
+                self.gba.map.visit_all();
             }
         }
         if let Some(at) = map_at {

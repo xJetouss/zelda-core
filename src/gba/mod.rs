@@ -1374,10 +1374,20 @@ pub fn strip_ring(icons: &[Vec<u8>]) -> Vec<Vec<u8>> {
         return icons.to_vec();
     }
     let n = ICON_W * ICON_H;
+    // gleiche Aufnahmen (z. B. vier gleiche Flaschen) nur einmal zählen – sonst gälte das Item selbst als Kreis
+    let mut uniq: Vec<&Vec<u8>> = Vec::new();
+    for im in icons {
+        if !uniq.iter().any(|u| *u == im) {
+            uniq.push(im);
+        }
+    }
+    if uniq.len() < 3 {
+        return icons.to_vec();
+    }
     let mut ring: Vec<Option<[u8; 4]>> = vec![None; n];
     for (i, r) in ring.iter_mut().enumerate() {
         let mut counts: Vec<([u8; 4], usize)> = Vec::new();
-        for im in icons {
+        for im in uniq.iter() {
             let p = [im[i * 4], im[i * 4 + 1], im[i * 4 + 2], im[i * 4 + 3]];
             match counts.iter_mut().find(|c| c.0 == p) {
                 Some(c) => c.1 += 1,
@@ -1385,7 +1395,7 @@ pub fn strip_ring(icons: &[Vec<u8>]) -> Vec<Vec<u8>> {
             }
         }
         if let Some(best) = counts.iter().max_by_key(|c| c.1) {
-            if best.0[3] != 0 && best.1 * 2 > icons.len() {
+            if best.0[3] != 0 && best.1 * 2 > uniq.len() {
                 *r = Some(best.0);
             }
         }

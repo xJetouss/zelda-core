@@ -3268,3 +3268,39 @@ fn dev_cut_bush() {
         println!("{}: Zelda 3 aktiv {} – {}", if z3 { "Z3" } else { "Emu" }, b.z3.active(), status(&b));
     }
 }
+
+/// Spielstand: Map16-Nummern der Oberwelt-Karte im Arbeitsspeicher rund um Link (Tür/Gras falsch gespeichert?)
+#[test]
+#[ignore]
+fn dev_door_tiles() {
+    let Some((snes, _rom)) = boot() else { return };
+    let Ok(st) = std::env::var("STATE_FILE") else { return };
+    let mut a = snes.clone();
+    if std::env::var_os("Z3").is_some() {
+        let _ = crate::z3::sync(&mut a, true);
+        for _ in 0..5 {
+            a.run_frame();
+            a.bus.apu.dsp.out.clear();
+        }
+    }
+    a.load_state(&std::fs::read(st).unwrap()).unwrap();
+    for _ in 0..20 {
+        a.run_frame();
+        a.bus.apu.dsp.out.clear();
+    }
+    shot(&a, "door_now");
+    let area = ram8(&a, 0x7E040A);
+    let (lx, ly) = (ram16(&a, 0x7E0022) as i32, ram16(&a, 0x7E0020) as i32);
+    let (ax, ay) = ((area as i32 & 7) * 512, ((area as i32 & 0x3F) / 8) * 512);
+    let (tx, ty) = ((lx - ax) / 16, (ly - ay) / 16);
+    println!("Gebiet {area:02X}, Link {lx},{ly} -> Kachel {tx},{ty}");
+    for y in (ty - 6).max(0)..(ty + 3).min(64) {
+        let mut row = String::new();
+        for x in (tx - 6).max(0)..(tx + 6).min(64) {
+            let i = (y * 64 + x) as usize * 2;
+            let v = a.bus.wram[0x2000 + i] as u16 | (a.bus.wram[0x2001 + i] as u16) << 8;
+            row += &format!("{}{v:03X} ", if v >= 0x9A4 { "*" } else { " " });
+        }
+        println!("{y:2}: {row}");
+    }
+}

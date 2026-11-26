@@ -29,6 +29,7 @@ pub mod ffi {
         pub fn pl_z3_set_map16(table: *const u16, count: usize);
         pub fn pl_z3_get_map16(out: *mut u16, count: usize) -> usize;
         pub fn PlM16(v: u16) -> u16;
+        pub fn pl_z3_fix_saved_tiles();
     }
 }
 
@@ -143,6 +144,8 @@ mod run {
                     std::slice::from_raw_parts_mut(pl_z3_cgram(), 0x100).copy_from_slice(&b.ppu.cgram);
                     std::slice::from_raw_parts_mut(pl_z3_oam() as *mut u8, 544).copy_from_slice(&b.ppu.oam);
                     pl_z3_import_apu(b.apu.ram.as_ptr(), b.apu.dsp.regs.as_ptr());
+                    // Spielstände einer früheren Fassung: falsch gespeicherte Tür-/Gras-Kacheln reparieren
+                    pl_z3_fix_saved_tiles();
                 }
             }
             b.frame_done = false;
