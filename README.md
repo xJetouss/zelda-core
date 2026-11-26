@@ -1,4 +1,4 @@
-# Zelda Core 0.47 – A Link to the Past & The Minish Cap
+# Zelda Core 0.48 – A Link to the Past & The Minish Cap
 
 Eigener SNES-Emulator in Rust, zugeschnitten auf *The Legend of Zelda: A Link to the Past*.
 **Keine ROM enthalten** – du brauchst eine Kopie deines eigenen Moduls (`.sfc`/`.smc`).
@@ -66,7 +66,7 @@ Wird automatisch erkannt (eigener Treiber, kein Steam/BetterJoy nötig):
 
 ## Schnellmenü (Item-Leiste wie in BotW/TotK)
 
-* Controller: **Steuerkreuz rechts halten**, mit Stick (links/rechts), Steuerkreuz links oder **L/R** wählen, loslassen = ausrüsten.
+* Controller: **Steuerkreuz ← oder → halten** = Item für Y, **↑ halten** = Item für X; mit Stick (links/rechts) oder **L/R** wählen, loslassen = ausrüsten.
 * Tastatur: **V halten**, Pfeiltasten links/rechts, loslassen. Kurz tippen = Leiste bleibt offen (dann A/Enter = ausrüsten, B = abbrechen). Maus: Symbol anklicken.
 * Das Spiel pausiert, solange die Leiste offen ist. Die Symbole (auch jede Flasche mit ihrem Inhalt) werden im Hintergrund aus dem Item-Menü deiner ROM aufgenommen.
 * Abschaltbar unter Steuerung (dann läuft Link mit Steuerkreuz rechts wieder nach rechts).

@@ -1460,7 +1460,7 @@ impl Root {
                 chk!("fast_text", t("Schnellere Dialoge: Text sofort anzeigen", "Faster dialogs: show text instantly"), s.fast_text);
                 chk!("auto_collect", t("Herzen und Rubine automatisch einsammeln", "Collect hearts and rupees automatically"), s.auto_collect);
                 chk!("mirror_direct", t("Spiegel direkt aus dem Inventar verwenden", "Use the mirror directly from the inventory"), s.mirror_direct);
-                chk!("x_slot", t("X = zweiter Item-Slot (im Inventar mit X belegen, ← Auswahlleiste)", "X = second item slot (assign with X in the inventory, ← selector)"), s.x_slot);
+                chk!("x_slot", t("X = zweiter Item-Slot (im Inventar mit X belegen, Steuerkreuz ↑ Auswahlleiste)", "X = second item slot (assign with X in the inventory, d-pad ↑ selector)"), s.x_slot);
                 chk!("pixel_inv", t("Neues Inventar im Pixel-Look (Start)", "New pixel-style inventory (Start)"), s.pixel_inv);
                 chk!("minus_map", t("Controller − / Select öffnet die Karte", "Controller − / Select opens the map"), s.minus_map);
                 chk_then!("health_blink", t("Kein Warnton bei wenig Energie – Herz blinkt am Bildrand", "No low-health beep – heart blinks at the screen edge"), |r: &mut Root| r.app.rebuild_rom(), s.health_blink);

@@ -76,6 +76,7 @@ struct Api {
     noclip: FInt,
     complete: FVoidI,
     room_exits: FProg,
+    hide_counts: FInt,
 }
 
 /// geladene DLL, ROM des laufenden Picori, Anfangszustand
@@ -165,6 +166,7 @@ fn load_api() -> Result<&'static Api, String> {
             noclip: f!("tmc_noclip"),
             complete: f!("tmc_cheat_complete"),
             room_exits: f!("tmc_room_exits"),
+            hide_counts: f!("tmc_hide_counts"),
         };
         Ok(Box::leak(Box::new(api)))
     }
@@ -521,6 +523,12 @@ impl Core {
         let mut v = vec![0i32; 7 * 64];
         let n = unsafe { (self.api.room_exits)(v.as_mut_ptr(), v.len() as i32) }.max(0) as usize;
         (0..n.min(64)).map(|i| (v[i * 7 + 1], v[i * 7 + 2], v[i * 7 + 3] as u8, v[i * 7 + 4] as u8, v[i * 7 + 5], v[i * 7 + 6])).collect()
+    }
+    /// Anzahl (Bomben/Pfeile) auf den Tasten ausblenden
+    pub fn set_hide_counts(&self, on: bool) {
+        if self.ready {
+            unsafe { (self.api.hide_counts)(on as i32) };
+        }
     }
     pub fn set_noclip(&self, on: bool) {
         if self.ready {

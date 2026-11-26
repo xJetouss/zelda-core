@@ -2006,11 +2006,13 @@ impl App {
             }
         }
         self.pro_prev = ps.buttons;
-        let left = self.s.x_slot && ctl_dpad & (1 << 9) != 0;
-        if !self.qm.open && (qm_key || qm_pad || left) && !self.qm.held_prev {
-            self.qm_for_x = left && !(qm_key || qm_pad);
+        // Steuerkreuz: ↑ = Item für X wählen, ← = Item für Y wählen (→ ebenfalls Y)
+        let up = self.s.x_slot && ctl_dpad & (1 << 11) != 0;
+        let left = ctl_dpad & (1 << 9) != 0;
+        if !self.qm.open && (qm_key || qm_pad || left || up) && !self.qm.held_prev {
+            self.qm_for_x = up && !(qm_key || qm_pad || left);
         }
-        self.qm_held = qm_key || qm_pad || left;
+        self.qm_held = qm_key || qm_pad || left || up;
         self.qm_pad = qm_pad;
         self.qm_dir = dir;
         let dzf = |v: gfx::Vec2| { let dz = self.s.deadzone.max(0.25); let l = v.length(); if l < dz { gfx::Vec2::ZERO } else { v / l * ((l - dz) / (1.0 - dz)).min(1.0) } };
@@ -2142,7 +2144,8 @@ impl App {
             let n = self.qm.entries.len().max(1);
             // Richtung links/rechts: Sticks, Pfeile/Steuerkreuz, L/R
             let mut dx = 0i8;
-            let pad = if self.qm_for_x && self.qm_held { pad & !(1 << 9) } else { pad };
+            // die gehaltene Steuerkreuz-Richtung (↑ für X, ← für Y) blättert nicht
+            let pad = if self.qm_held { pad & !((1 << 9) | (1 << 11)) } else { pad };
             if self.qm_dir.x < -0.5 || pad & (1 << 9) != 0 || pad & (1 << 5) != 0 {
                 dx = -1;
             }
@@ -3635,7 +3638,7 @@ impl App {
         }
         if !self.win_states && !self.qm.open && self.game.is_some() {
             // ↑: mit dem Spiegel sofort die Welt wechseln (danach ist wieder das alte Item auf Y)
-            if dp & (1 << 11) != 0 {
+            if dp & (1 << 11) != 0 && !self.s.x_slot {
                 if let Some(g) = &self.game {
                     let has_mirror = quickmenu::entries(&g.snes).iter().any(|e| e.idx == 20);
                     if has_mirror && !self.x_using && self.x_force.is_none() && quickmenu::can_use(&g.snes) {

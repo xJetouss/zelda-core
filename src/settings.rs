@@ -120,7 +120,7 @@ pub struct Settings {
     pub auto_pause: bool,
     /// Karte in einem eigenen Fenster
     pub map_own_window: bool,
-    /// Steuerkreuz am Controller bewegt Link nicht (↑ Spielstände, ↓ Karte, → Schnellmenü)
+    /// Steuerkreuz am Controller bewegt Link nicht (↑ Item für X, ← / → Item für Y, ↓ Karte)
     pub dpad_no_move: bool,
     /// Szenenwechsel schneller (1 = normal)
     pub transition_speed: f32,

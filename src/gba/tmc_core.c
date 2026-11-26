@@ -152,6 +152,10 @@ EXPORT int tmc_run_frame(uint16_t keys) {
     if (sState != 1)
         return 0;
     gTmcCoreKeys = keys;
+    {
+        extern void TmcCore_UpdateHideCounts(void);
+        TmcCore_UpdateHideCounts();
+    }
     SignalObjectAndWait(sGo, sDone, INFINITE, FALSE);
     return sState == 1;
 }
@@ -896,8 +900,20 @@ EXPORT int tmc_room_exits(int* out, int cap) {
     return n / 7;
 }
 
-/* Anzahl (Bomben, Pfeile) auf den Tasten B/A nicht zeigen (Zelda Core: Einstellung, Standard an) */
-int gTmcCoreHideCounts = 1;
+/* Anzahl (Bomben, Pfeile) auf den Tasten B/A nicht zeigen (Zelda Core: Einstellung, Standard an).
+ * Die Ziffern-Kacheln werden nur geleert, solange auf A oder B wirklich ein Item mit Anzahl liegt – nur dann
+ * gehören diese Kacheln sicher zu den Ziffern und nicht zu einer anderen Figur. */
+static int sHideCountsOn = 1;
+int gTmcCoreHideCounts = 0;
 EXPORT void tmc_hide_counts(int on) {
-    gTmcCoreHideCounts = on;
+    sHideCountsOn = on;
+}
+
+static int IsCountedItem(u8 i) {
+    return i == 7 || i == 8 || i == 9 || i == 10;
+}
+
+void TmcCore_UpdateHideCounts(void) {
+    const u8* eq = Resolve(0x02002AF4u, 2);
+    gTmcCoreHideCounts = sHideCountsOn && eq != NULL && (IsCountedItem(eq[0]) || IsCountedItem(eq[1]));
 }

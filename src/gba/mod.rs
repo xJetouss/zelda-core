@@ -810,6 +810,11 @@ mod running {
         pub fn room_exits(&self) -> Vec<(i32, i32, u8, u8, i32, i32)> {
             self.rc.as_ref().map_or(Vec::new(), |c| c.room_exits())
         }
+        pub fn set_hide_counts(&self, on: bool) {
+            if let Some(c) = &self.rc {
+                c.set_hide_counts(on);
+            }
+        }
         pub fn set_noclip(&self, on: bool) {
             if let Some(c) = &self.rc {
                 c.set_noclip(on);
@@ -2173,6 +2178,71 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
             }
         }
         g.set_noclip(false);
+    }
+
+    /// Picori: Bombe legen und explodieren lassen – mit/ohne Ausblendung der Ziffern (Figuren unverändert?)
+    #[test]
+    #[ignore]
+    fn dev_rc_bomb() {
+        let (Ok(p), Ok(st)) = (std::env::var("PASTLINK_GBA_ROM"), std::env::var("GBA_RC_STATE")) else { return };
+        let out = std::env::var("PASTLINK_OUT").unwrap_or_else(|_| ".".into());
+        let mut g = Gba::load_with(Path::new(&p), true, false).unwrap();
+        while g.loading() {
+            g.run_frame(0);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let raw = lz4_flex::decompress_size_prepended(&std::fs::read(st).unwrap()).unwrap();
+        assert!(g.load_state(&raw));
+        let rr = g.room_rect(0x03, 0x06).unwrap();
+        let mut f = 0;
+        while !g.travel(0x03, 0x06, rr[2] / 2, rr[3] / 2) && f < 600 {
+            g.run_frame(if f % 20 < 2 { 0x0080 } else { 0 });
+            f += 1;
+        }
+        for _ in 0..200 {
+            g.run_frame(0);
+        }
+        let _ = g.locations(super::tmcmap::LOGIC);
+        g.cheat_complete();
+        for _ in 0..10 {
+            g.run_frame(0);
+        }
+        g.equip(false, 7);
+        g.equip(true, 7);
+        g.poke(0x0200_2AEC, &[30]);
+        for _ in 0..20 {
+            g.run_frame(0);
+        }
+        let base = g.save_state().unwrap();
+        let mut shots: Vec<Vec<Vec<u8>>> = Vec::new();
+        for hide in [false, true] {
+            assert!(g.load_state(&base));
+            g.set_hide_counts(hide);
+            let mut v = Vec::new();
+            for f in 0..200 {
+                g.run_frame(if (30..34).contains(&f) { 0x8000 } else if (40..44).contains(&f) { 0x0080 } else { 0 });
+                if f % 10 == 0 {
+                    v.push(g.frame.clone());
+                    if hide && (f == 60 || f == 120 || f == 140 || f == 160) {
+                        let c: Vec<crate::gfx::Color32> = g.frame.chunks_exact(4).map(|c| crate::gfx::Color32::from_rgb(c[0], c[1], c[2])).collect();
+                        crate::devtest::bmp(&format!("{out}/bomb_{f}.bmp"), g.w, g.h, &c);
+                    }
+                }
+            }
+            shots.push(v);
+        }
+        let w = g.w;
+        for (k, (a, b)) in shots[0].iter().zip(shots[1].iter()).enumerate() {
+            // Unterschiede außerhalb der oberen Anzeige (Zeilen ab 32)
+            let mut d = 0;
+            for i in (w * 32 * 4..a.len().min(b.len())).step_by(4) {
+                if a[i..i + 3] != b[i..i + 3] {
+                    d += 1;
+                }
+            }
+            println!("Bild {:3}: {d} Pixel verschieden (außerhalb der Anzeige)", k * 10);
+        }
+        g.set_hide_counts(true);
     }
 
     /// Picori: 100-%-Cheat – was danach noch fehlt
