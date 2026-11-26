@@ -3230,3 +3230,41 @@ fn dev_map16_diff() {
         println!("  {id:X}: US {:04X?} DE {:04X?}", &us[id * 4..id * 4 + 4], &de[id * 4..id * 4 + 4]);
     }
 }
+
+/// Spielstand laden, nach unten laufen, nach links drehen, Schwert: Busch schneiden – Emulation gegen Zelda 3
+#[test]
+#[ignore]
+fn dev_cut_bush() {
+    let Some((snes, _rom)) = boot() else { return };
+    let Ok(st) = std::env::var("STATE_FILE") else { return };
+    let data = std::fs::read(st).unwrap();
+    let script = |s: &mut Snes| {
+        let mut run = |s: &mut Snes, pad: u16, n: u32| {
+            for _ in 0..n {
+                s.bus.joy[0] = pad;
+                s.run_frame();
+                s.bus.apu.dsp.out.clear();
+            }
+        };
+        run(s, 0, 20);
+        run(s, 0x0400, 27);
+        run(s, 0x0200, 7);
+        run(s, 0, 4);
+        run(s, 0x8000, 4);
+        run(s, 0, 60);
+    };
+    for z3 in [false, true] {
+        let mut b = snes.clone();
+        if z3 {
+            let _ = crate::z3::sync(&mut b, true);
+            for _ in 0..5 {
+                b.run_frame();
+                b.bus.apu.dsp.out.clear();
+            }
+        }
+        b.load_state(&data).unwrap();
+        script(&mut b);
+        shot(&b, if z3 { "cut_z3" } else { "cut_emu" });
+        println!("{}: Zelda 3 aktiv {} – {}", if z3 { "Z3" } else { "Emu" }, b.z3.active(), status(&b));
+    }
+}

@@ -831,7 +831,7 @@ impl App {
                 };
                 // Ersatz: die B-Aufnahme selbst – dann ohne die Anzahl unten rechts (Bomben, Bogen)
                 let fallback = (y_item != 0 && composed.is_none()).then(|| self.gba.icons_rgba.get(&y_item).cloned()).flatten().map(|mut v| {
-                    if super::minish::COUNTED.contains(&y_item) {
+                    if super::minish::COUNTED.contains(&y_item) && !super::NO_DIGITS_IN_CAPTURE {
                         for y in 15..super::ICON_H {
                             for x in 13..super::ICON_W {
                                 v[(y * super::ICON_W + x) * 4 + 3] = 0;

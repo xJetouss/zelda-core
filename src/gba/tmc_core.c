@@ -895,3 +895,9 @@ EXPORT int tmc_room_exits(int* out, int cap) {
     }
     return n / 7;
 }
+
+/* Anzahl (Bomben, Pfeile) auf den Tasten B/A nicht zeigen (Zelda Core: Einstellung, Standard an) */
+int gTmcCoreHideCounts = 1;
+EXPORT void tmc_hide_counts(int on) {
+    gTmcCoreHideCounts = on;
+}

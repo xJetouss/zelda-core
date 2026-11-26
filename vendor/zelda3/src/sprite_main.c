@@ -9,6 +9,9 @@
 #include "player.h"
 #include "misc.h"
 
+// pastlink: feste Map16-Nummern der US-Fassung auf die geladene Tabelle umrechnen (glue.c)
+uint16 PlM16(uint16 v);
+
 #define byte_7FFE01 (*(uint8*)(g_ram+0x1FE01))
 static const int8 kSpriteKeese_Tab2[16] = {0, 8, 11, 14, 16, 14, 11, 8, 0, -8, -11, -14, -16, -14, -11, -8};
 static const int8 kSpriteKeese_Tab3[16] = {-16, -14, -11, -8, 0, 8, 11, 14, 16, 14, 11, 8, 0, -9, -11, -14};
@@ -13851,8 +13854,8 @@ void Sprite_ChickenLady(int k) {  // 9afed3
 }
 
 void Overworld_DrawWoodenDoor(uint16 pos, bool unlocked) {  // 9bc952
-  Overworld_DrawMap16_Persist(pos, unlocked ? 0xda5 : 0xda4);
-  Overworld_DrawMap16_Persist(pos+2, unlocked ? 0xda7 : 0xda6);
+  Overworld_DrawMap16_Persist(pos, PlM16(unlocked ? 0xda5 : 0xda4));
+  Overworld_DrawMap16_Persist(pos+2, PlM16(unlocked ? 0xda7 : 0xda6));
   nmi_load_bg_from_vram = 1;
 }
 

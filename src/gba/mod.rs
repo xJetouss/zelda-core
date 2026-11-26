@@ -30,6 +30,8 @@ pub const TILE_W: usize = 26;
 pub const TILE_H: usize = 22;
 /// Picori: Hintergrundebenen beim Aufnehmen der Item-Symbole (0 = nur Figuren)
 pub const ICON_LAYERS: i32 = 0;
+/// PC-Fassung: die Aufnahmen des B-Felds enthalten keine Anzahl (Ziffern-Kacheln werden dabei ausgeblendet)
+pub const NO_DIGITS_IN_CAPTURE: bool = true;
 
 /// Ist der GBA-Kern eingebaut?
 pub fn available() -> bool {
@@ -1207,7 +1209,7 @@ pub fn slot_from_b(base: &[u8], hud: &[u8], ring: &[u8]) -> Vec<u8> {
 /// (unten rechts) wieder auf den leeren Kreis setzen und das Item dort ergänzen (bei Bomben gespiegelt)
 pub fn slot_from_b_nocount(base: &[u8], hud: &[u8], ring: &[u8], item: u8, off: (isize, isize)) -> Vec<u8> {
     let mut out = slot_from_b(base, hud, ring);
-    if !minish::COUNTED.contains(&item) {
+    if NO_DIGITS_IN_CAPTURE || !minish::COUNTED.contains(&item) {
         return out;
     }
     for y in 15..ICON_H {
@@ -1232,7 +1234,7 @@ pub fn item_from_b(hud: &[u8], ring: &[u8], off: (isize, isize), counted: bool) 
                 continue;
             }
             // Anzahl (Bomben, Pfeile) unten rechts gehört nicht zur Grafik
-            if counted && x >= INV_ICON - 6 && y >= 14 {
+            if counted && !NO_DIGITS_IN_CAPTURE && x >= INV_ICON - 6 && y >= 14 {
                 continue;
             }
             let h = (hy as usize * ICON_W + hx as usize) * 4;
@@ -1248,7 +1250,8 @@ pub fn item_from_b(hud: &[u8], ring: &[u8], off: (isize, isize), counted: bool) 
 /// Items mit Anzahl (Bomben, Bogen): die Anzahl überdeckt im Spiel die untere rechte Ecke des Items – diesen Bereich
 /// entfernen; die Bomben sind symmetrisch, dort wird die Ecke von links gespiegelt ergänzt
 pub fn clean_counted(img: &mut [u8], item: u8) {
-    if !minish::COUNTED.contains(&item) {
+    // Aufnahmen enthalten die Anzahl nicht mehr (tmc_core.dll blendet die Ziffern-Kacheln aus) – nichts zu tun
+    if NO_DIGITS_IN_CAPTURE || !minish::COUNTED.contains(&item) {
         return;
     }
     let s = INV_ICON;
@@ -2202,6 +2205,35 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
             }
         }
         println!("Fundorte: geholt {yes}, fehlt {no}, unbekannt {unk}");
+        // Gebiet wechseln und zurück: bleiben die Flags?
+        for (a, r) in [(0x03u8, 0x06u8), (0x02, 0x00), (0x03, 0x01)] {
+            let rr = g.room_rect(a, r).unwrap();
+            let mut f = 0;
+            while !g.travel(a, r, rr[2] / 2, rr[3] / 2) && f < 600 {
+                g.run_frame(if f % 20 < 2 { 0x0080 } else { 0 });
+                f += 1;
+            }
+            for _ in 0..240 {
+                g.run_frame(0);
+            }
+        }
+        let (mut yes2, mut no2) = (0, 0);
+        for (n, key, ty) in &locs {
+            if !(*ty == 3 || (8..=13).contains(ty)) || n.contains("Dummy") || n.starts_with("Fake") || *key == u32::MAX {
+                continue;
+            }
+            match g.loc_done(*key) {
+                Some(true) => yes2 += 1,
+                Some(false) => {
+                    no2 += 1;
+                    if no2 <= 10 {
+                        println!("  danach fehlt: {n} {key:08x}");
+                    }
+                }
+                None => {}
+            }
+        }
+        println!("nach Gebietswechseln: geholt {yes2}, fehlt {no2}; Items {}; Fortschritt {:?}", g.owned_items().len(), g.progress());
     }
 
     /// Picori: ganze Karte vorab erstellen (alle Räume), Dauer messen, Übersichtsbilder je Raum speichern

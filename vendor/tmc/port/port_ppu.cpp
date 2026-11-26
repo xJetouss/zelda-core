@@ -1398,6 +1398,16 @@ extern "C" void Port_PPU_PresentFrame(void) {
     const uint16_t coreBackdrop = gBgPltt[0];
     if (gTmcCoreHosted && gTmcCoreLayers != 0x0F)
         gBgPltt[0] = 0x7C1F;
+    /* Zelda Core: Ziffern der Anzahl bei Aufnahmen ausblenden */
+    uint8_t coreDigits[0x80];
+    extern int gTmcCoreHideCounts;
+    const bool coreHideDigits = gTmcCoreHosted && (gTmcCoreLayers != 0x0F || gTmcCoreHideCounts);
+    if (coreHideDigits) {
+        memcpy(coreDigits, &gVram[0x10000 + 0x11a * 0x20], 0x40);
+        memcpy(coreDigits + 0x40, &gVram[0x10000 + 0x126 * 0x20], 0x40);
+        memset(&gVram[0x10000 + 0x11a * 0x20], 0, 0x40);
+        memset(&gVram[0x10000 + 0x126 * 0x20], 0, 0x40);
+    }
 #endif
 
     dispcnt = (uint16_t)(gIoMem[0x00] | (gIoMem[0x01] << 8));
@@ -1556,6 +1566,10 @@ extern "C" void Port_PPU_PresentFrame(void) {
     if (gTmcCoreHosted) {
         gIoMem[0x01] = coreDispHi;
         gBgPltt[0] = coreBackdrop;
+        if (coreHideDigits) {
+            memcpy(&gVram[0x10000 + 0x11a * 0x20], coreDigits, 0x40);
+            memcpy(&gVram[0x10000 + 0x126 * 0x20], coreDigits + 0x40, 0x40);
+        }
         TmcCore_Present(virtuappu_frame_buffer, virtuappu_registers.frame_width, MODE1_GBA_HEIGHT, MODE1_GBA_WIDTH);
         return;
     }
