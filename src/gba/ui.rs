@@ -906,9 +906,26 @@ impl App {
                 let img = self.gba.b_patch.as_ref().or(self.gba.icons_rgba.get(&orig).filter(|_| orig != 0));
                 let m_orig = self.gba.icons_rgba.get(&orig).filter(|_| orig != 0);
                 let m_y = self.gba.icons_rgba.get(&self.gba.y_shown);
+                // Maske um 3 Pixel erweitert: beim Wechsel zeichnet das Spiel das Item kurz leicht versetzt (z. B. ein
+                // Stück vom Feuerstab blieb sonst neben B stehen)
+                let (iw, ih) = (super::ICON_W as isize, super::ICON_H as isize);
+                let mask: Vec<bool> = (0..iw * ih)
+                    .map(|p| {
+                        let (px, py) = (p % iw, p / iw);
+                        (-3..=3).any(|dy| {
+                            (-3..=3).any(|dx| {
+                                let (qx, qy) = (px + dx, py + dy);
+                                qx >= 0 && qy >= 0 && qx < iw && qy < ih && {
+                                    let o = ((qy * iw + qx) * 4) as usize;
+                                    m_orig.is_some_and(|m| m[o + 3] != 0) || m_y.is_some_and(|m| m[o + 3] != 0)
+                                }
+                            })
+                        })
+                    })
+                    .collect();
                 let covered = |o: usize| match (m_orig, m_y) {
                     (None, None) => true,
-                    (a, b) => a.is_some_and(|m| m[o + 3] != 0) || b.is_some_and(|m| m[o + 3] != 0),
+                    _ => mask[o / 4],
                 };
                 if let (Some(img), true) = (img, self.gba.cur.len() == w * h) {
                     for y in 0..super::ICON_H {
