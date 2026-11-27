@@ -31,6 +31,31 @@ pub struct Item {
     /// Download-Adresse der DLL (sonst neben index.json)
     #[serde(default)]
     pub url: String,
+    /// Bild der Mod (PNG neben index.json)
+    #[serde(default)]
+    pub icon: String,
+    /// Spiele: „alttp“, „minish“ (leer = A Link to the Past)
+    #[serde(default)]
+    pub games: Vec<String>,
+}
+
+impl Item {
+    /// läuft in A Link to the Past / The Minish Cap
+    pub fn for_games(&self) -> (bool, bool) {
+        if self.games.is_empty() {
+            return (true, false);
+        }
+        (self.games.iter().any(|g| g == "alttp"), self.games.iter().any(|g| g == "minish"))
+    }
+    /// zwischengespeichertes Bild (Mod-Ordner/icons)
+    pub fn icon_path(&self) -> Option<PathBuf> {
+        (!self.icon.is_empty() && !self.icon.contains(['/', '\\'])).then(|| dir().join("icons").join(&self.icon))
+    }
+}
+
+/// Datei neben index.json
+fn beside_index(file: &str) -> String {
+    index_url().rsplit_once('/').map(|(b, _)| format!("{b}/{file}")).unwrap_or_default()
 }
 
 #[derive(Deserialize)]
@@ -54,6 +79,8 @@ struct State {
     failed: HashMap<String, String>,
     /// neue Dateien im Mod-Ordner (Mods neu laden)
     new_files: bool,
+    /// neue Bilder geholt (Liste neu zeichnen)
+    icons_changed: bool,
 }
 
 #[derive(Clone, Default)]
@@ -117,6 +144,10 @@ impl Shop {
     pub fn error_of(&self, id: &str) -> Option<String> {
         self.st.lock().unwrap().failed.get(id).cloned()
     }
+    /// neue Bilder seit dem letzten Aufruf?
+    pub fn take_icons_changed(&self) -> bool {
+        std::mem::take(&mut self.st.lock().unwrap().icons_changed)
+    }
     /// neue Dateien seit dem letzten Aufruf?
     pub fn take_new(&self) -> bool {
         std::mem::take(&mut self.st.lock().unwrap().new_files)
@@ -139,6 +170,23 @@ impl Shop {
                 Ok(i) => {
                     s.items = i.mods.into_iter().filter(|m| !m.file.contains(['/', '\\']) && m.file.to_ascii_lowercase().ends_with(".dll")).collect();
                     s.status = Some(Status::Ready);
+                    // Bilder der Mods holen (einmal, danach aus dem Zwischenspeicher)
+                    let want: Vec<(String, PathBuf)> = s.items.iter().filter_map(|it| it.icon_path().filter(|p| !p.exists()).map(|p| (beside_index(&it.icon), p))).collect();
+                    let st2 = st.clone();
+                    drop(s);
+                    if !want.is_empty() {
+                        std::thread::spawn(move || {
+                            for (url, p) in want {
+                                if let Ok(b) = download(&url) {
+                                    if b.starts_with(b"\x89PNG") {
+                                        let _ = std::fs::create_dir_all(dir().join("icons"));
+                                        let _ = std::fs::write(&p, b);
+                                    }
+                                }
+                            }
+                            st2.lock().unwrap().icons_changed = true;
+                        });
+                    }
                 }
                 Err(e) => s.status = Some(Status::Error(e)),
             }
@@ -188,6 +236,10 @@ impl Shop {
                 let target = if loaded { d.join(format!("{}.new", it.file)) } else { d.join(&it.file) };
                 std::fs::write(&target, b).map_err(|e| e.to_string())?;
                 save_version(&it.file, &it.version);
+                // Bild neben die DLL (für die Liste der geladenen Mods)
+                if let Some(ic) = it.icon_path().filter(|p| p.exists()) {
+                    let _ = std::fs::copy(ic, d.join(&it.file).with_extension("png"));
+                }
                 Ok(())
             });
             let mut s = st.lock().unwrap();

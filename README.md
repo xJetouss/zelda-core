@@ -1,4 +1,4 @@
-# Zelda Core 0.52 – A Link to the Past & The Minish Cap
+# Zelda Core 0.53 – A Link to the Past & The Minish Cap
 
 Eigener SNES-Emulator in Rust, zugeschnitten auf *The Legend of Zelda: A Link to the Past*.
 **Keine ROM enthalten** – du brauchst eine Kopie deines eigenen Moduls (`.sfc`/`.smc`).
@@ -245,28 +245,33 @@ Der Gewinn ist klein (~7 % pro Bild), weil die meiste Zeit in Grafik und Ton ste
 2. `cargo build --release` übersetzt den aufgezeichneten Code (Meldung „Recompiler: … Blöcke“).
 Ohne `recomp/` baut alles wie bisher, der Schalter ist dann ausgegraut.
 
-## Mods (in Rust, nur im RC-Modus)
+## Mods (in Rust; A Link to the Past im RC-Modus, The Minish Cap immer)
 In der App steckt keine Mod. Menü *Mods* → „Mod-Liste…“ öffnet ein eigenes Fenster mit allen Mods (aus dem
 GitHub-Release „mods“ dieses Repositorys): „Holen“ bzw. „Alle holen“ installiert sie in den Ordner `mods` neben der .exe,
-der Schalter daneben schaltet sie an und aus. Neue Versionen erscheinen dort als „Update“.
+der Schalter daneben schaltet sie an und aus. Neue Versionen erscheinen dort als „Update“. Jede Mod hat ein eigenes Bild
+und zeigt, in welchen Spielen sie läuft (A Link to the Past, The Minish Cap oder beide).
 
 In der Mod-Liste (Quelltext in `mods/`, jede Mod eine eigene DLL):
 
-| Mod | Was sie macht |
-|---|---|
-| Gegner-Lebensbalken | Lebensanzeige über jedem Gegner |
-| Speedrun-Timer | Spielzeit mit Zwischenzeiten für Amulette und Kristalle |
-| Info-Anzeige | Position, Gebiet/Raum, Gegnerzahl, Lag-Bilder |
-| Zeitlupe (L halten) | halbe Geschwindigkeit, solange L gedrückt ist |
-| Doppelter Schaden / Ein-Treffer-Modus | schwerere Spielvarianten |
-| Doppelte Rubine, Herz- und Magie-Regeneration, Voller Vorrat | Komfort |
-| Tag & Nacht | Tageszeit mit Abend und Nacht auf der Oberwelt, Uhr oben rechts |
-| Regenbogen-Tunika | Links Tunika wechselt die Farbe (Sprite-Palette) |
-| Bunte Gegner | Gegner und Figuren schillern (Sprite-Paletten) |
-| Königskrone | Bild aus einer PNG-Datei folgt Link (Bild-Schnittstelle) |
-| Münz-Klang | eigener Ton bei jeder Rubine (Ton-Schnittstelle) |
+| Mod | Was sie macht | Spiele |
+|---|---|---|
+| Gegner-Lebensbalken | Lebensanzeige über jedem Gegner | ALttP |
+| Speedrun-Timer | Spielzeit mit Zwischenzeiten (Amulette/Kristalle bzw. Elemente) | beide |
+| Info-Anzeige | Position, Gebiet/Raum, Gegner, Lag-Bilder | beide |
+| Zeitlupe (L halten) | halbe Geschwindigkeit, solange L gedrückt ist | beide |
+| Doppelter Schaden / Ein-Treffer-Modus | schwerere Spielvarianten | beide |
+| Doppelte Rubine, Herz-Regeneration, Voller Vorrat | Komfort | beide |
+| Magie-Regeneration | Magie füllt sich von selbst | ALttP |
+| Tag & Nacht | Tageszeit mit Abend und Nacht auf der Oberwelt, Uhr oben rechts | beide |
+| Regenbogen-Tunika | Links Tunika wechselt die Farbe (Sprite-Palette) | ALttP |
+| Bunte Gegner | Gegner und Figuren schillern (Sprite-Paletten) | ALttP |
+| Königskrone | Bild aus einer PNG-Datei folgt Link (Bild-Schnittstelle) | beide |
+| Münz-Klang | eigener Ton bei jeder Rubine (Ton-Schnittstelle) | beide |
 
-**Eigene Mods** sind Rust-DLLs (Schnittstelle `assets/mod_template/src/api.rs`, Version 3). „Mod-Vorlage
+**Eigene Mods** sind Rust-DLLs (Schnittstelle `assets/mod_template/src/api.rs`, Version 4; Mods der Version 3 laufen
+weiter in A Link to the Past). Ab Version 4 sagt eine Mod mit `pastlink_mod_games`, ob sie auch in The Minish Cap läuft
+(dort GBA-Adressen, Zeichnen in GBA-Pixeln, Zusatz-Infos wie Links Position unter `api::minish`), und zeigt mit
+`pastlink_mod_icon` ein eigenes Bild in der Mod-Liste. „Mod-Vorlage
 exportieren…“ legt ein Beispielprojekt mit Doku an. Eine Mod darf im RC-Modus:
 - RAM, SRAM, VRAM, Paletten, Sprites (OAM) und die ROM im Speicher lesen und schreiben,
 - Grafik-Kacheln und Farben dauerhaft austauschen (`vram_patch`, `cgram_patch`, PNG → SNES-Kacheln mit `png_tiles`),

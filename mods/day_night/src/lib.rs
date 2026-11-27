@@ -1,4 +1,4 @@
-//! Tag & Nacht: Auf der Oberwelt wird es alle 6 Minuten Abend und Nacht, dann wieder Tag. Oben rechts zeigt eine Uhr die Tageszeit.
+//! Tag & Nacht: Auf der Oberwelt wird es alle 6 Minuten Abend und Nacht (beide Spiele).
 
 #[path = "../../../assets/mod_template/src/api.rs"]
 mod api;
@@ -17,8 +17,12 @@ const DAY: u64 = 6 * 60 * 60;
 
 extern "C" fn post(api: *const Api) {
     let g = game(api);
-    let md = g.read8(0x7E0010);
-    if !matches!(md, 0x09 | 0x0B | 0x0E) || g.read8(0x7E001B) != 0 {
+    let outside = if g.is_minish() {
+        playing_any(&g) && g.read8(minish::INFO_OVERWORLD) != 0 && g.read8(minish::INFO_MENU) == 0
+    } else {
+        matches!(g.read8(0x7E0010), 0x09 | 0x0B | 0x0E) && g.read8(0x7E001B) == 0
+    };
+    if !outside {
         return;
     }
     // Tageszeit 0..1 (0 = Mitternacht, 0.5 = Mittag)
@@ -29,13 +33,16 @@ extern "C" fn post(api: *const Api) {
         // nachts bläulich, in der Dämmerung rötlich
         let dusk = (1.0 - (dark - 0.5).abs() * 2.0).max(0.0);
         let r = (0x10 as f32 + dusk * 0x40 as f32) as u32;
-        // weit über den Rand hinaus: Breitbild und „Fenster füllen“ zeigen mehr als 256 Pixel (das Bild wird beschnitten)
+        // weit über den Rand hinaus: Breitbild und „Fenster füllen“ zeigen mehr als das Spielbild (wird beschnitten)
         g.rect(-2048, -64, 4352, 352, r << 24 | 0x10 << 16 | 0x40 << 8 | a);
     }
     let hours = (t * 24.0) as u32;
     let mins = ((t * 24.0).fract() * 60.0) as u32;
-    g.rect(214, 2, 40, 10, 0x00000090);
-    g.text(217, 3, &format!("{hours:02}:{mins:02}"), if dark > 0.5 { 0xA0C0FFFF } else { 0xFFE080FF });
+    let (sw, _) = g.screen();
+    // The Minish Cap: unter den Knöpfen oben rechts
+    let y = if g.is_minish() { 40 } else { 2 };
+    g.rect(sw - 42, y, 40, 10, 0x00000090);
+    g.text(sw - 39, y + 1, &format!("{hours:02}:{mins:02}"), if dark > 0.5 { 0xA0C0FFFF } else { 0xFFE080FF });
 }
 
-crate::export_mod!(c"Tag & Nacht", c"Auf der Oberwelt wird es alle 6 Minuten Abend und Nacht, dann wieder Tag.", pre: None, post: Some(post));
+crate::export_mod!(c"Tag & Nacht", c"Auf der Oberwelt wird es alle 6 Minuten Abend und Nacht, dann wieder Tag.", pre: None, post: Some(post), games: api::GAMES_ALTTP | api::GAMES_MINISH, icon: Some(include_bytes!("../icon.png")));

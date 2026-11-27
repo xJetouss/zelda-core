@@ -62,4 +62,4 @@ extern "C" fn post(api: *const Api) {
     *last = now;
 }
 
-crate::export_mod!(c"Gegner-Lebensbalken", c"Zeigt über jedem Gegner, wie viel Leben er noch hat.", pre: None, post: Some(post));
+crate::export_mod!(c"Gegner-Lebensbalken", c"Zeigt über jedem Gegner, wie viel Leben er noch hat.", pre: None, post: Some(post), games: api::GAMES_ALTTP, icon: Some(include_bytes!("../icon.png")));

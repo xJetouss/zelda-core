@@ -1,4 +1,4 @@
-//! Voller Vorrat: Bomben, Pfeile und Magie bleiben immer voll (sobald du sie hast).
+//! Voller Vorrat: Bomben, Pfeile (und in A Link to the Past Magie) bleiben voll.
 
 #[path = "../../../assets/mod_template/src/api.rs"]
 mod api;
@@ -14,7 +14,19 @@ use std::sync::Mutex;
 
 extern "C" fn post(api: *const Api) {
     let g = game(api);
-    if !g.in_game() {
+    if !in_game_any(&g) {
+        return;
+    }
+    if g.is_minish() {
+        // Obergrenzen je nach Bombentasche / Köcher
+        let bomb_cap = [10u8, 30, 50, 99][(g.read8(minish::BOMB_BAG) as usize).min(3)];
+        let arrow_cap = [30u8, 50, 70, 99][(g.read8(minish::QUIVER) as usize).min(3)];
+        if g.read8(minish::BOMBS) > 0 && g.read8(minish::BOMBS) < bomb_cap {
+            g.write8(minish::BOMBS, bomb_cap);
+        }
+        if g.read8(minish::ARROWS) > 0 && g.read8(minish::ARROWS) < arrow_cap {
+            g.write8(minish::ARROWS, arrow_cap);
+        }
         return;
     }
     // Obergrenzen mit Upgrades (Feen-Teich): Bomben 10 + $F370, Pfeile 30 + $F371
@@ -31,4 +43,4 @@ extern "C" fn post(api: *const Api) {
     }
 }
 
-crate::export_mod!(c"Voller Vorrat", c"Bomben, Pfeile und Magie bleiben immer voll (sobald du sie hast).", pre: None, post: Some(post));
+crate::export_mod!(c"Voller Vorrat", c"Bomben und Pfeile (in A Link to the Past auch Magie) bleiben immer voll, sobald du sie hast.", pre: None, post: Some(post), games: api::GAMES_ALTTP | api::GAMES_MINISH, icon: Some(include_bytes!("../icon.png")));

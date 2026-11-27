@@ -25,4 +25,4 @@ extern "C" fn post(api: *const Api) {
     g.cgram_patch(0x90, &cols);
 }
 
-crate::export_mod!(c"Bunte Gegner", c"Alle Gegner und Figuren schillern in wechselnden Farben (Sprite-Paletten 1–6).", pre: None, post: Some(post));
+crate::export_mod!(c"Bunte Gegner", c"Alle Gegner und Figuren schillern in wechselnden Farben (Sprite-Paletten 1–6).", pre: None, post: Some(post), games: api::GAMES_ALTTP, icon: Some(include_bytes!("../icon.png")));

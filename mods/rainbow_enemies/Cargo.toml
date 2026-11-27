@@ -1,6 +1,6 @@
 [package]
 name = "rainbow_enemies"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "Alle Gegner und Figuren schillern in wechselnden Farben (Sprite-Paletten 1–6)."
 

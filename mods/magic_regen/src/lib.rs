@@ -30,4 +30,4 @@ extern "C" fn post(api: *const Api) {
     }
 }
 
-crate::export_mod!(c"Magie-Regeneration", c"Magie füllt sich langsam von selbst wieder auf.", pre: None, post: Some(post));
+crate::export_mod!(c"Magie-Regeneration", c"Magie füllt sich langsam von selbst wieder auf.", pre: None, post: Some(post), games: api::GAMES_ALTTP, icon: Some(include_bytes!("../icon.png")));

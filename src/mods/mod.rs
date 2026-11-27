@@ -94,10 +94,45 @@ struct Store {
     logs: Vec<String>,
 }
 
+/// Das laufende Spiel, auf das eine Mod zugreift
+pub enum Sys<'a> {
+    /// A Link to the Past (SNES, Recompiled-Modus)
+    Snes { cpu: &'a mut Cpu, bus: &'a mut Bus },
+    /// The Minish Cap (PC-Fassung): Tasten dieses Bilds, Ansicht (`tmc_view`), Item-Menü offen
+    #[cfg(pastlink_gba)]
+    Gba { g: &'a mut crate::gba::Gba, pad: &'a mut u16, view: Option<[i32; 12]>, menu: bool },
+}
+
+/// The Minish Cap: Zusatz-Infos für Mods ab dieser Adresse (siehe `api::minish`)
+pub const MC_INFO: u32 = 0x0F00_0000;
+
+/// The Minish Cap: Zusatz-Infos als Bytes (Aufbau wie `api::minish::INFO_…`)
+#[cfg(pastlink_gba)]
+fn mc_info(g: &crate::gba::Gba, view: Option<[i32; 12]>, menu: bool) -> [u8; 0x40] {
+    let mut b = [0u8; 0x40];
+    let put16 = |b: &mut [u8; 0x40], o: usize, v: i32| b[o..o + 2].copy_from_slice(&(v as i16).to_le_bytes());
+    b[0x00] = (view.is_some() && !menu) as u8;
+    b[0x01] = menu as u8;
+    if let Some(v) = view {
+        b[0x02] = v[0] as u8;
+        b[0x03] = v[1] as u8;
+        b[0x04] = (v[2] != 0) as u8;
+        put16(&mut b, 0x06, v[9]);
+        put16(&mut b, 0x08, v[10]);
+        // auf dem Bild: Spielwelt minus Kamera (im Breitbild ist das Bild breiter)
+        put16(&mut b, 0x0A, v[9] - v[5]);
+        put16(&mut b, 0x0C, v[10] - v[6]);
+        put16(&mut b, 0x0E, v[5]);
+        put16(&mut b, 0x10, v[6]);
+    }
+    put16(&mut b, 0x12, g.w as i32);
+    put16(&mut b, 0x14, g.h as i32);
+    b
+}
+
 /// Zugriff einer Mod auf das laufende Spiel
 pub struct Ctx<'a> {
-    pub cpu: &'a mut Cpu,
-    pub bus: &'a mut Bus,
+    pub sys: Sys<'a>,
     pub frame: u64,
     out: &'a mut Out,
     store: &'a mut Store,
@@ -119,8 +154,36 @@ impl Ctx<'_> {
         self.write8(addr, v as u8);
         self.write8(addr + 1, (v >> 8) as u8);
     }
+    /// laufendes Spiel (`api::GAME_…`)
+    pub fn game(&self) -> u32 {
+        match &self.sys {
+            Sys::Snes { .. } => api::GAME_ALTTP,
+            #[cfg(pastlink_gba)]
+            Sys::Gba { .. } => api::GAME_MINISH,
+        }
+    }
+    /// Zeichenfläche in Spielpixeln
+    pub fn screen(&self) -> (u32, u32) {
+        match &self.sys {
+            Sys::Snes { .. } => (256, 224),
+            #[cfg(pastlink_gba)]
+            Sys::Gba { g, .. } => (g.w as u32, g.h as u32),
+        }
+    }
     pub fn mem_read(&self, sp: u32, addr: u32) -> u8 {
-        let b = &*self.bus;
+        let b = match &self.sys {
+            Sys::Snes { bus, .. } => &**bus,
+            #[cfg(pastlink_gba)]
+            Sys::Gba { g, view, menu, .. } => {
+                if sp != space::BUS {
+                    return 0;
+                }
+                if (MC_INFO..MC_INFO + 0x40).contains(&addr) {
+                    return mc_info(g, *view, *menu)[(addr - MC_INFO) as usize];
+                }
+                return g.peek(addr, 1).map_or(0, |b| b[0]);
+            }
+        };
         match sp {
             space::BUS => match addr >> 16 {
                 0x7E | 0x7F => b.wram[(addr & 0x1FFFF) as usize],
@@ -135,7 +198,16 @@ impl Ctx<'_> {
         }
     }
     pub fn mem_write(&mut self, sp: u32, addr: u32, v: u8) {
-        let b = &mut *self.bus;
+        let b = match &mut self.sys {
+            Sys::Snes { bus, .. } => &mut **bus,
+            #[cfg(pastlink_gba)]
+            Sys::Gba { g, .. } => {
+                if sp == space::BUS && !(MC_INFO..MC_INFO + 0x40).contains(&addr) {
+                    g.poke(addr, &[v]);
+                }
+                return;
+            }
+        };
         let word = |w: &mut u16| *w = if addr & 1 == 0 { (*w & 0xFF00) | v as u16 } else { (*w & 0x00FF) | (v as u16) << 8 };
         match sp {
             space::BUS => match addr >> 16 {
@@ -173,7 +245,8 @@ impl Ctx<'_> {
         }
     }
     pub fn reg(&self, r: u32) -> u32 {
-        let c = &*self.cpu;
+        let Sys::Snes { cpu, .. } = &self.sys else { return 0 };
+        let c = &**cpu;
         match r {
             api::reg::A => c.a as u32,
             api::reg::X => c.x as u32,
@@ -188,7 +261,8 @@ impl Ctx<'_> {
         }
     }
     pub fn set_reg(&mut self, r: u32, v: u32) {
-        let c = &mut *self.cpu;
+        let Sys::Snes { cpu, .. } = &mut self.sys else { return };
+        let c = &mut **cpu;
         match r {
             api::reg::A => c.a = v as u16,
             api::reg::X => c.x = v as u16,
@@ -204,13 +278,23 @@ impl Ctx<'_> {
     }
     /// Routine sofort verlassen (wie RTS bzw. RTL des Spiels)
     pub fn ret(&mut self, long: bool) {
-        self.cpu.exec_op(self.bus, if long { 0x6B } else { 0x60 });
+        if let Sys::Snes { cpu, bus } = &mut self.sys {
+            cpu.exec_op(bus, if long { 0x6B } else { 0x60 });
+        }
     }
     pub fn pad(&self) -> u16 {
-        self.bus.joy[0]
+        match &self.sys {
+            Sys::Snes { bus, .. } => bus.joy[0],
+            #[cfg(pastlink_gba)]
+            Sys::Gba { pad, .. } => **pad,
+        }
     }
     pub fn set_pad(&mut self, p: u16) {
-        self.bus.joy[0] = p;
+        match &mut self.sys {
+            Sys::Snes { bus, .. } => bus.joy[0] = p,
+            #[cfg(pastlink_gba)]
+            Sys::Gba { pad, .. } => **pad = p,
+        }
     }
     pub fn rect(&mut self, x: i32, y: i32, w: i32, h: i32, rgba: u32) {
         self.out.shapes.push(Shape::Rect(x, y, w, h, rgba));
@@ -225,7 +309,11 @@ impl Ctx<'_> {
     }
     /// Link steht im normalen Spiel
     pub fn in_game(&self) -> bool {
-        matches!(self.read8(0x7E0010), 0x07 | 0x09 | 0x0B) && self.read8(0x7E0011) == 0
+        match &self.sys {
+            Sys::Snes { .. } => matches!(self.read8(0x7E0010), 0x07 | 0x09 | 0x0B) && self.read8(0x7E0011) == 0,
+            #[cfg(pastlink_gba)]
+            Sys::Gba { view, menu, .. } => view.is_some() && !menu,
+        }
     }
 
     // ---- Schnittstelle Version 3
@@ -393,6 +481,10 @@ pub struct Entry {
     pub name_en: String,
     pub desc_de: String,
     pub desc_en: String,
+    /// Spiele (`api::GAMES_…`)
+    pub games: u32,
+    /// eigenes Bild der Mod (RGBA, Breite, Höhe)
+    pub icon: Option<Arc<(Vec<u8>, usize, usize)>>,
     pub m: Box<dyn Mod>,
 }
 
@@ -464,6 +556,12 @@ impl Mods {
         i.list.iter().map(|e| (e.id.clone(), if en { e.name_en.clone() } else { e.name_de.clone() }, if en { e.desc_en.clone() } else { e.desc_de.clone() })).collect()
     }
 
+    /// Spiele und Bild einer geladenen Mod (Kennung wie in `entries`)
+    pub fn meta(&self, id: &str) -> Option<(u32, Option<Arc<(Vec<u8>, usize, usize)>>)> {
+        let i = self.inner.lock().unwrap();
+        i.list.iter().find(|e| e.id == id).map(|e| (e.games, e.icon.clone()))
+    }
+
     /// Neue DLLs aus dem Mod-Ordner laden (schon geladene bleiben)
     pub fn load_dlls(&mut self) {
         // Updates aus dem Shop (`x.dll.new`): ersetzen, solange die alte DLL noch nicht geladen ist
@@ -505,7 +603,7 @@ impl Mods {
         if self.on_ids != on {
             self.on_ids = on.to_vec();
             let mut i = self.inner.lock().unwrap();
-            let idx: Vec<usize> = (0..i.list.len()).filter(|&k| on.contains(&i.list[k].id)).collect();
+            let idx: Vec<usize> = (0..i.list.len()).filter(|&k| on.contains(&i.list[k].id) && i.list[k].games & api::GAMES_ALTTP != 0).collect();
             // Grafik-Änderungen ausgeschalteter Mods entfernen
             let before = i.store.patches.len();
             i.store.patches.retain(|p| idx.contains(&p.0));
@@ -530,7 +628,7 @@ impl Mods {
                     let g = &mut *g;
                     let Some(ks) = g.hook_map.get(&a).cloned() else { return };
                     for k in ks {
-                        let mut ctx = Ctx { cpu: &mut *c, bus: &mut *b, frame: g.frame, out: &mut g.out, store: &mut g.store, cur: k };
+                        let mut ctx = Ctx { sys: Sys::Snes { cpu: &mut *c, bus: &mut *b }, frame: g.frame, out: &mut g.out, store: &mut g.store, cur: k };
                         g.list[k].m.on_hook(a, &mut ctx);
                     }
                 });
@@ -551,7 +649,7 @@ impl Mods {
             g.out.speed = 1.0;
         }
         for &k in &g.on {
-            let mut ctx = Ctx { cpu: &mut snes.cpu, bus: &mut snes.bus, frame: g.frame, out: &mut g.out, store: &mut g.store, cur: k };
+            let mut ctx = Ctx { sys: Sys::Snes { cpu: &mut snes.cpu, bus: &mut snes.bus }, frame: g.frame, out: &mut g.out, store: &mut g.store, cur: k };
             if post {
                 g.list[k].m.post_frame(&mut ctx);
             } else {
@@ -591,6 +689,41 @@ impl Mods {
         }
         if snes.mod_patch.as_ref().map(Arc::as_ptr) != self.patch.as_ref().map(Arc::as_ptr) {
             snes.mod_patch = self.patch.clone();
+        }
+    }
+
+    /// The Minish Cap: Mods vor (`post` = false) bzw. nach einem Spielbild laufen lassen; `pad` kann die Mod ändern
+    #[cfg(pastlink_gba)]
+    pub fn gba_frame(&mut self, g: &mut crate::gba::Gba, pad: &mut u16, on: &[String], post: bool) {
+        if !post && self.shop.take_new() {
+            self.load_dlls();
+        }
+        if on.is_empty() || !g.is_rc() || g.loading() {
+            self.shown.clear();
+            self.speed = 1.0;
+            return;
+        }
+        let view = g.map_view();
+        let menu = g.menu_item().is_some();
+        let mut inner = self.inner.lock().unwrap();
+        let x = &mut *inner;
+        if !post {
+            x.out.shapes.clear();
+            x.out.speed = 1.0;
+        }
+        let idx: Vec<usize> = (0..x.list.len()).filter(|&k| on.contains(&x.list[k].id) && x.list[k].games & api::GAMES_MINISH != 0).collect();
+        for k in idx {
+            let mut ctx = Ctx { sys: Sys::Gba { g: &mut *g, pad: &mut *pad, view, menu }, frame: x.frame, out: &mut x.out, store: &mut x.store, cur: k };
+            if post {
+                x.list[k].m.post_frame(&mut ctx);
+            } else {
+                x.list[k].m.pre_frame(&mut ctx);
+            }
+        }
+        if post {
+            x.frame += 1;
+            self.shown.clone_from(&x.out.shapes);
+            self.speed = x.out.speed;
         }
     }
 
@@ -635,11 +768,16 @@ impl Mods {
     /// Zeichnungen der Mods über das Spielbild legen. `r` = Spielbild auf dem Schirm, `view_w` = Breite in
     /// SNES-Pixeln (mit Breitbild-Rand `ext` links und rechts)
     pub fn draw(&self, p: &gfx::Painter, r: gfx::Rect, view_w: usize, ext: usize) {
-        if self.shown.is_empty() || view_w == 0 {
+        self.draw_h(p, r, view_w, 224, ext)
+    }
+
+    /// wie `draw`, mit Bildhöhe in Spielpixeln (The Minish Cap: 160)
+    pub fn draw_h(&self, p: &gfx::Painter, r: gfx::Rect, view_w: usize, view_h: usize, ext: usize) {
+        if self.shown.is_empty() || view_w == 0 || view_h == 0 {
             return;
         }
         let kx = r.width() / view_w as f32;
-        let ky = r.height() / 224.0;
+        let ky = r.height() / view_h as f32;
         let at = |x: i32, y: i32| gfx::pos2(r.left() + (x as f32 + ext as f32) * kx, r.top() + y as f32 * ky);
         let col = |c: u32| Color32::from_rgba_unmultiplied((c >> 24) as u8, (c >> 16) as u8, (c >> 8) as u8, c as u8);
         let p = p.with_clip_rect(r);
@@ -811,6 +949,9 @@ mod dll {
             patch_clear,
             png_tiles,
             log,
+            game: c.game(),
+            screen_w: c.screen().0,
+            screen_h: c.screen().1,
         }
     }
 
@@ -853,14 +994,36 @@ mod dll {
                 return Err("pastlink_mod liefert nichts".into());
             }
             let info: &'static ModInfo = &*info;
-            if info.abi != PASTLINK_MOD_ABI {
-                return Err(format!("Schnittstelle {} statt {} – bitte mit der aktuellen Vorlage neu bauen", info.abi, PASTLINK_MOD_ABI));
+            // Version 3 läuft weiter (nur A Link to the Past), neuere Mods brauchen eine neuere App
+            if !(3..=PASTLINK_MOD_ABI).contains(&info.abi) {
+                return Err(format!("Schnittstelle {} statt {} – bitte mit der aktuellen Vorlage neu bauen bzw. Zelda Core aktualisieren", info.abi, PASTLINK_MOD_ABI));
+            }
+            // ab Version 4: für welche Spiele (sonst nur A Link to the Past) und eigenes Bild (PNG)
+            let games = match GetProcAddress(h, c"pastlink_mod_games".as_ptr() as *const u8) {
+                Some(g) => {
+                    let g: extern "C" fn() -> u32 = std::mem::transmute(g);
+                    g() & (super::api::GAMES_ALTTP | super::api::GAMES_MINISH)
+                }
+                None => super::api::GAMES_ALTTP,
+            };
+            let mut icon = None;
+            if let Some(ic) = GetProcAddress(h, c"pastlink_mod_icon".as_ptr() as *const u8) {
+                let ic: extern "C" fn(*mut u32) -> *const u8 = std::mem::transmute(ic);
+                let mut n = 0u32;
+                let d = ic(&mut n);
+                if !d.is_null() && n > 0 && n < 1 << 20 {
+                    icon = decode_png(std::slice::from_raw_parts(d, n as usize)).map(Arc::new);
+                }
+            }
+            // sonst: gleichnamiges PNG neben der DLL (z. B. aus der Mod-Liste geholt)
+            if icon.is_none() {
+                icon = std::fs::read(p.with_extension("png")).ok().and_then(|b| decode_png(&b)).map(Arc::new);
             }
             let text = |c: *const std::ffi::c_char| if c.is_null() { String::new() } else { CStr::from_ptr(c).to_string_lossy().into_owned() };
             let name = text(info.name);
             let desc = text(info.description);
             let file = p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
-            Ok(Entry { id: format!("dll:{file}"), name_de: name.clone(), name_en: name, desc_de: desc.clone(), desc_en: desc, m: Box::new(DllMod { info }) })
+            Ok(Entry { id: format!("dll:{file}"), name_de: name.clone(), name_en: name, desc_de: desc.clone(), desc_en: desc, games, icon, m: Box::new(DllMod { info }) })
         }
     }
 }
@@ -920,6 +1083,106 @@ mod tests {
 
     fn id(n: &str) -> Vec<String> {
         vec![format!("dll:{n}.dll")]
+    }
+
+    /// The Minish Cap: Mods auf einem Spielstand (`GBA_RC_STATE`, lz4) prüfen
+    #[cfg(pastlink_gba)]
+    #[test]
+    #[ignore]
+    fn dev_mods_minish() {
+        use crate::gba::Gba;
+        let (Ok(rom), Ok(st)) = (std::env::var("PASTLINK_GBA_ROM"), std::env::var("GBA_RC_STATE")) else { return };
+        let mut g = Gba::load_with(Path::new(&rom), true, false).unwrap();
+        while g.loading() {
+            g.run_frame(0);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let raw = lz4_flex::decompress_size_prepended(&std::fs::read(st).unwrap()).unwrap();
+        assert!(g.load_state(&raw));
+        let mut m = load_all();
+        let run = |m: &mut Mods, g: &mut Gba, on: &[String], n: u32, pad: u16| {
+            for _ in 0..n {
+                let mut p = pad;
+                m.gba_frame(g, &mut p, on, false);
+                g.run_frame(p);
+                m.gba_frame(g, &mut p, on, true);
+                let mut a = Vec::new();
+                g.take_audio(&mut a);
+            }
+        };
+        run(&mut m, &mut g, &[], 30, 0);
+        let info = |g: &Gba| g.map_view();
+        println!("Ansicht {:?}", info(&g));
+        const HP: u32 = 0x0200_2AEA;
+        const RUP: u32 = 0x0200_2B00;
+        let rd16 = |g: &Gba, a: u32| g.peek(a, 2).map_or(0, |b| b[0] as u16 | (b[1] as u16) << 8);
+        // Zeichnende Mods
+        for n in ["speedrun", "info_hud", "day_night", "crown"] {
+            run(&mut m, &mut g, &id(n), 20, 0);
+            println!("{n}: {} Zeichnungen", m.shown.len());
+            assert!(!m.shown.is_empty() || n == "day_night", "{n} zeichnet nichts");
+        }
+        if let Some(Shape::Image(_, x, y, ..)) = m.shown.iter().find(|s| matches!(s, Shape::Image(..))) {
+            println!("Krone bei {x},{y}");
+        }
+        // Herz-Regeneration: Leben runter, nach 8 s wieder mehr
+        let max = g.peek(HP + 1, 1).unwrap()[0];
+        g.poke(HP, &[max - 12]);
+        run(&mut m, &mut g, &id("heart_regen"), 500, 0);
+        let hp = g.peek(HP, 1).unwrap()[0];
+        println!("heart_regen: {} -> {hp} (max {max})", max - 12);
+        assert!(hp > max - 12);
+        // Doppelte Rubine
+        let on = id("double_rupees");
+        run(&mut m, &mut g, &on, 2, 0);
+        let r0 = rd16(&g, RUP);
+        g.poke(RUP, &((r0 + 5) as u16).to_le_bytes());
+        run(&mut m, &mut g, &on, 2, 0);
+        println!("double_rupees: {r0} -> {}", rd16(&g, RUP));
+        assert!(rd16(&g, RUP) == r0 + 10 || rd16(&g, RUP) == [100, 300, 500, 999][g.peek(0x0200_2AE8, 1).unwrap()[0].min(3) as usize]);
+        // Münz-Klang
+        let on = id("coin_sound");
+        run(&mut m, &mut g, &on, 2, 0);
+        let r1 = rd16(&g, RUP).saturating_sub(5);
+        g.poke(RUP, &r1.to_le_bytes());
+        run(&mut m, &mut g, &on, 1, 0);
+        g.poke(RUP, &(r1 + 1).to_le_bytes());
+        run(&mut m, &mut g, &on, 1, 0);
+        let mut buf = vec![0i16; 1066];
+        m.mix(&mut buf);
+        let peak = buf.iter().map(|v| v.unsigned_abs()).max().unwrap();
+        println!("coin_sound: Spitze {peak}");
+        assert!(peak > 1000);
+        // Voller Vorrat
+        g.poke(0x0200_2AEC, &[3, 4]);
+        run(&mut m, &mut g, &id("full_supply"), 2, 0);
+        println!("full_supply: Bomben/Pfeile {:?}", g.peek(0x0200_2AEC, 2).unwrap());
+        assert!(g.peek(0x0200_2AEC, 1).unwrap()[0] >= 10);
+        // Zeitlupe mit L
+        run(&mut m, &mut g, &id("slowmo"), 2, 0x0020);
+        println!("slowmo: Tempo {}", m.speed());
+        assert!(m.speed() < 1.0);
+        // Doppelter Schaden
+        let on = id("hard_damage");
+        g.poke(HP, &[max]);
+        run(&mut m, &mut g, &on, 2, 0);
+        g.poke(HP, &[max - 8]);
+        run(&mut m, &mut g, &on, 2, 0);
+        let hp = g.peek(HP, 1).unwrap()[0];
+        println!("hard_damage: {max} -> {hp}");
+        assert_eq!(hp, max - 16);
+        // Ein-Treffer-Modus
+        let on = id("one_hit");
+        run(&mut m, &mut g, &on, 2, 0);
+        g.poke(HP, &[hp - 4]);
+        run(&mut m, &mut g, &on, 2, 0);
+        println!("one_hit: Leben {}", g.peek(HP, 1).unwrap()[0]);
+        assert_eq!(g.peek(HP, 1).unwrap()[0], 0);
+        // nur-ALttP-Mods laufen in Minish Cap nicht
+        run(&mut m, &mut g, &id("enemy_hp"), 5, 0);
+        assert!(m.shown.is_empty());
+        let ic = m.inner.lock().unwrap().list.iter().filter(|e| e.icon.is_some()).count();
+        println!("Mods mit Bild: {ic}");
     }
 
     /// Alle Mods im RC-Modus prüfen (`Z3=1`: im Zelda-3-Modus)

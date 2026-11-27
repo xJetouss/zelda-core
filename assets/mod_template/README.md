@@ -20,7 +20,7 @@ und dürfen dort fast alles:
 
 ## Aufbau
 
-- `src/api.rs`: die Schnittstelle (nicht ändern; dieselbe Datei steckt in Zelda Core, Version 3).
+- `src/api.rs`: die Schnittstelle (nicht ändern; dieselbe Datei steckt in Zelda Core, Version 4).
 - `src/lib.rs`: deine Mod. Sie exportiert `pastlink_mod()` und liefert eine `ModInfo` mit Name,
   Beschreibung, `pre_frame` / `post_frame` und optional Hook-Adressen + `on_hook`.
 
@@ -58,6 +58,39 @@ extern "C" fn post_frame(api: *const Api) {
 | `cgram_patch(index, farben)` | Farben dauerhaft ersetzen (BGR555, z. B. `bgr555(0xFF8000)`) |
 | `png_tiles(bytes, bpp)` → (Kacheln, Palette) | PNG in SNES-Kacheln umwandeln, dann mit `vram_patch` einsetzen |
 | `patch_clear()` | eigene Grafik-/Farbänderungen entfernen |
+
+### Ab Version 4: The Minish Cap und Mod-Icon
+
+Eine Mod kann auch in **The Minish Cap** laufen. Dazu exportiert sie, für welche Spiele sie gedacht ist
+(ohne diesen Export gilt sie nur für A Link to the Past):
+
+```rust
+#[no_mangle]
+pub extern "C" fn pastlink_mod_games() -> u32 {
+    api::GAMES_ALTTP | api::GAMES_MINISH
+}
+```
+
+| Funktion | Bedeutung |
+|---|---|
+| `game()` / `is_minish()` | welches Spiel gerade läuft (`GAME_ALTTP`, `GAME_MINISH`) |
+| `screen()` | Zeichenfläche in Spielpixeln (A Link to the Past 256×224, The Minish Cap 240×160, im Breitbild breiter) |
+| `read8/…(a)` in The Minish Cap | GBA-Adressen: EWRAM `0x02000000…`, IWRAM `0x03000000…`, Paletten `0x05000000…`, VRAM `0x06000000…`, OAM `0x07000000…` |
+| `api::minish::…` | wichtige Adressen (Leben, Rubine, Bomben, Pfeile …) und Zusatz-Infos der App (`INFO_IN_GAME`, `INFO_AREA`, `INFO_LINK_SX` …) |
+| `mc_in_game()` / `mc_link_on_screen()` / `mc_area_room()` | bequemer Zugriff auf diese Infos |
+
+In The Minish Cap gibt es keine Hooks, Register, ROM-Zugriffe und kein `vram_patch`/`cgram_patch`.
+
+**Mod-Icon:** Mit `pastlink_mod_icon` zeigt die Mod-Liste ein eigenes Bild (PNG, am besten 32×32):
+
+```rust
+static ICON: &[u8] = include_bytes!("../icon.png");
+#[no_mangle]
+pub extern "C" fn pastlink_mod_icon(len: *mut u32) -> *const u8 {
+    unsafe { *len = ICON.len() as u32 };
+    ICON.as_ptr()
+}
+```
 | `log(text)` | Meldung in Zelda Core anzeigen |
 | `link_on_screen()` | Links Position auf dem Bildschirm |
 

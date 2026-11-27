@@ -1784,24 +1784,50 @@ impl Root {
     // ------------------------------------------------------------ Cheats
 
     /// Fenster „Mod-Liste“: alle Mods aus dem GitHub-Release „mods“ und eigene DLLs – holen, aktualisieren, an/aus
+    /// (jede Mod mit Bild und den Spielen, in denen sie läuft)
     fn mods_ui(&mut self, cx: &mut Context<Root>) -> Vec<AnyElement> {
         use crate::mods::shop::{Have, Status};
         let en = self.app.s.ui_en;
         let t = move |d: &'static str, e: &'static str| tr(en, d, e);
         let mut v = Vec::new();
         if !self.app.s.recompiled {
-            v.push(small(t("Mods laufen nur im RC-Modus (Knopf „RC“ oben rechts).", "Mods only run in RC mode (\"RC\" button top right).")).into_any_element());
+            v.push(small(t("A Link to the Past: Mods laufen nur im RC-Modus (Knopf „RC“ oben rechts). In The Minish Cap laufen sie immer.", "A Link to the Past: mods only run in RC mode (\"RC\" button top right). In The Minish Cap they always run.")).into_any_element());
         }
         let shop = self.app.mods.shop.clone();
+        if shop.take_icons_changed() {
+            MOD_ICONS.with(|c| c.borrow_mut().clear());
+        }
         let installed = self.app.mods.entries(en);
         let on_ids = self.app.s.mods_on.clone();
-        // Zeile: Name + Beschreibung, rechts Schalter (installiert) und Knopf (holen/Update)
+        let mods_ref = &self.app.mods;
+        // Zeile: Bild, Name + Spiele + Beschreibung, rechts Schalter (installiert) und Knopf (holen/Update)
         let mod_row = |id: String, name: String, desc: String, have: Option<Have>, file: Option<crate::mods::shop::Item>, cx: &mut Context<Root>| {
             let key = format!("dll:{}", file.as_ref().map(|f| f.file.clone()).unwrap_or_default());
             let key = if file.is_some() { key } else { id.clone() };
             let is_inst = installed.iter().any(|e| e.0 == key);
             let on = on_ids.contains(&key);
-            let text = div().flex().flex_col().gap(px(2.0)).child(strong(name)).child(small(desc));
+            // Spiele und Bild: aus der geladenen Mod, sonst aus der Mod-Liste
+            let meta = mods_ref.meta(&key);
+            let (alttp, minish) = match (&meta, &file) {
+                (Some((g, _)), _) => (g & 1 != 0, g & 2 != 0),
+                (None, Some(it)) => it.for_games(),
+                _ => (true, false),
+            };
+            let icon = match meta.as_ref().and_then(|m| m.1.clone()) {
+                Some(ic) => mod_icon_from(&key, &ic),
+                None => file.as_ref().and_then(|it| it.icon_path()).and_then(|p| mod_icon_file(&p)),
+            };
+            let games = match (alttp, minish) {
+                (true, true) => "A Link to the Past · The Minish Cap",
+                (false, true) => "The Minish Cap",
+                _ => "A Link to the Past",
+            };
+            let text = div().flex().flex_col().gap(px(2.0)).child(strong(name)).child(div().text_size(px(11.0)).text_color(col::faint()).child(games)).child(small(desc));
+            let pic = match icon {
+                Some(img) => gpui::img(gpui::ImageSource::Render(img)).w(px(32.0)).h(px(32.0)).flex_none().into_any_element(),
+                None => div().w(px(32.0)).h(px(32.0)).flex_none().rounded(px(6.0)).bg(col::faint()).opacity(0.25).into_any_element(),
+            };
+            let text = row().gap(px(10.0)).items_center().child(pic).child(text);
             let k2 = key.clone();
             let sw = switch(format!("modsw-{id}"), text, on, is_inst, cx, move |r| {
                 if let Some(i) = r.app.s.mods_on.iter().position(|x| *x == k2) {
@@ -2330,3 +2356,42 @@ fn tip(text: String) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView + 'stati
 
 #[allow(dead_code)]
 fn _unused(_: Hsla, _: Entity<Root>) {}
+
+
+thread_local! {
+    /// Bilder der Mods für die Mod-Liste (Schlüssel: Kennung oder Datei)
+    static MOD_ICONS: RefCell<HashMap<String, Option<std::sync::Arc<gpui::RenderImage>>>> = RefCell::new(HashMap::new());
+}
+
+/// Mod-Bild (RGBA) als GPUI-Bild, zwischengespeichert
+fn mod_icon_from(key: &str, ic: &std::sync::Arc<(Vec<u8>, usize, usize)>) -> Option<std::sync::Arc<gpui::RenderImage>> {
+    MOD_ICONS.with(|c| {
+        c.borrow_mut()
+            .entry(key.to_string())
+            .or_insert_with(|| {
+                let (rgba, w, h) = &**ic;
+                let mut bgra = rgba.clone();
+                for p in bgra.chunks_exact_mut(4) {
+                    p.swap(0, 2);
+                }
+                gfx::render_image(*w as u32, *h as u32, bgra).map(std::sync::Arc::new)
+            })
+            .clone()
+    })
+}
+
+/// Mod-Bild aus einer PNG-Datei (Mod-Liste), zwischengespeichert
+fn mod_icon_file(p: &std::path::Path) -> Option<std::sync::Arc<gpui::RenderImage>> {
+    let key = p.to_string_lossy().to_string();
+    if let Some(v) = MOD_ICONS.with(|c| c.borrow().get(&key).cloned()) {
+        return v;
+    }
+    let ic = std::fs::read(p).ok().and_then(|b| crate::mods::decode_png(&b)).map(std::sync::Arc::new);
+    match ic {
+        Some(ic) => mod_icon_from(&key, &ic),
+        None => {
+            MOD_ICONS.with(|c| c.borrow_mut().insert(key, None));
+            None
+        }
+    }
+}

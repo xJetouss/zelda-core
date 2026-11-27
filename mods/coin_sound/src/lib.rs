@@ -1,4 +1,4 @@
-//! Münz-Klang: Jede Rubine klingt zusätzlich wie eine Münze (eigener Ton über die Ton-Schnittstelle).
+//! Münz-Klang: Jede Rubine klingt zusätzlich wie eine Münze (beide Spiele).
 
 #[path = "../../../assets/mod_template/src/api.rs"]
 mod api;
@@ -36,11 +36,11 @@ fn chime() -> Vec<i16> {
 extern "C" fn post(api: *const Api) {
     let g = game(api);
     let mut last = LAST.lock().unwrap();
-    if !playing(&g) {
+    if !playing_any(&g) {
         *last = None;
         return;
     }
-    let now = g.read16(RUPEES);
+    let now = rupees(&g);
     if let Some(prev) = *last {
         if now > prev && now - prev <= 300 {
             g.play_sound(SOUND.get_or_init(chime), 1, 32_000, 0.8);
@@ -49,4 +49,4 @@ extern "C" fn post(api: *const Api) {
     *last = Some(now);
 }
 
-crate::export_mod!(c"Münz-Klang", c"Jede Rubine klingt zusätzlich wie eine Münze (eigener Ton über die Ton-Schnittstelle).", pre: None, post: Some(post));
+crate::export_mod!(c"Münz-Klang", c"Jede Rubine klingt zusätzlich wie eine Münze (eigener Ton über die Ton-Schnittstelle).", pre: None, post: Some(post), games: api::GAMES_ALTTP | api::GAMES_MINISH, icon: Some(include_bytes!("../icon.png")));

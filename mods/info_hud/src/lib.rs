@@ -1,4 +1,4 @@
-//! Info-Anzeige: Position, Gebiet/Raum, Gegnerzahl und Lag-Bilder unten am Rand.
+//! Info-Anzeige: Position, Gebiet/Raum und mehr unten am Rand (beide Spiele).
 
 #[path = "../../../assets/mod_template/src/api.rs"]
 mod api;
@@ -16,6 +16,20 @@ static ST: Mutex<(u8, u32)> = Mutex::new((0, 0));
 
 extern "C" fn post(api: *const Api) {
     let g = game(api);
+    let (sw, sh) = g.screen();
+    if g.is_minish() {
+        if !g.mc_in_game() {
+            return;
+        }
+        let (area, room) = g.mc_area_room();
+        let x = g.read16(minish::INFO_LINK_X) as i16;
+        let y = g.read16(minish::INFO_LINK_Y) as i16;
+        let place = if g.read8(minish::INFO_OVERWORLD) != 0 { "Oberwelt" } else { "innen" };
+        let txt = format!("X {x:5} Y {y:5}  Gebiet {area:02X} Raum {room:02X} {place}  besiegt {}", g.read32(minish::ENEMIES_KILLED));
+        g.rect(0, sh - 10, sw, 10, 0x000000A0);
+        g.text(3, sh - 9, &txt, 0xE0E0E0FF);
+        return;
+    }
     let mut st = ST.lock().unwrap();
     let md = g.read8(0x7E0010);
     // Bildzähler des Spiels ($1A): steht er still, obwohl gespielt wird, war es ein Lag-Bild
@@ -32,4 +46,4 @@ extern "C" fn post(api: *const Api) {
     g.text(3, 215, &txt, 0xE0E0E0FF);
 }
 
-crate::export_mod!(c"Info-Anzeige", c"Position, Gebiet/Raum, Gegnerzahl und Lag-Bilder unten am Rand.", pre: None, post: Some(post));
+crate::export_mod!(c"Info-Anzeige", c"Position, Gebiet/Raum (A Link to the Past: Gegner und Lag-Bilder, The Minish Cap: besiegte Gegner) unten am Rand.", pre: None, post: Some(post), games: api::GAMES_ALTTP | api::GAMES_MINISH, icon: Some(include_bytes!("../icon.png")));

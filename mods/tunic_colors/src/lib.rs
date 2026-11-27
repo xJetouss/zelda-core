@@ -25,4 +25,4 @@ extern "C" fn post(api: *const Api) {
     g.cgram_patch(0xF0, &cols);
 }
 
-crate::export_mod!(c"Regenbogen-Tunika", c"Links Tunika wechselt fließend durch alle Farben (Sprite-Palette).", pre: None, post: Some(post));
+crate::export_mod!(c"Regenbogen-Tunika", c"Links Tunika wechselt fließend durch alle Farben (Sprite-Palette).", pre: None, post: Some(post), games: api::GAMES_ALTTP, icon: Some(include_bytes!("../icon.png")));

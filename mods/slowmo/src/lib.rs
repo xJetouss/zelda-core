@@ -1,4 +1,4 @@
-//! Zeitlupe (L halten): Solange L gedrückt ist, läuft das Spiel mit halber Geschwindigkeit.
+//! Zeitlupe: Solange L gedrückt ist, läuft das Spiel mit halber Geschwindigkeit (beide Spiele).
 
 #[path = "../../../assets/mod_template/src/api.rs"]
 mod api;
@@ -21,4 +21,4 @@ extern "C" fn pre(api: *const Api) {
     }
 }
 
-crate::export_mod!(c"Zeitlupe (L halten)", c"Solange L gedrückt ist, läuft das Spiel mit halber Geschwindigkeit.", pre: Some(pre), post: None);
+crate::export_mod!(c"Zeitlupe (L halten)", c"Solange L gedrückt ist, läuft das Spiel mit halber Geschwindigkeit.", pre: Some(pre), post: None, games: api::GAMES_ALTTP | api::GAMES_MINISH, icon: Some(include_bytes!("../icon.png")));

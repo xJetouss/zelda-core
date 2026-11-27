@@ -1,4 +1,4 @@
-//! Doppelter Schaden: Schwerer: Jeder Treffer kostet doppelt so viele Herzen.
+//! Doppelter Schaden: Jeder Treffer kostet doppelt so viele Herzen (beide Spiele).
 
 #[path = "../../../assets/mod_template/src/api.rs"]
 mod api;
@@ -17,23 +17,23 @@ static LAST: Mutex<Option<u8>> = Mutex::new(None);
 extern "C" fn post(api: *const Api) {
     let g = game(api);
     let mut last = LAST.lock().unwrap();
-    if !playing(&g) {
+    if !playing_any(&g) {
         *last = None;
         return;
     }
-    let hp = g.read8(HP);
+    let now = hp(&g);
     if let Some(prev) = *last {
-        if hp < prev && hp > 0 {
-            let extra = prev - hp;
-            if extra >= hp {
+        if now < prev && now > 0 {
+            let extra = prev - now;
+            if extra >= now {
                 // tödlich: auf dem normalen Weg sterben lassen
-                g.write8(DAMAGE, 0xA0);
+                kill(&g);
             } else {
-                g.write8(HP, hp - extra);
+                set_hp(&g, now - extra);
             }
         }
     }
-    *last = Some(g.read8(HP));
+    *last = Some(hp(&g));
 }
 
-crate::export_mod!(c"Doppelter Schaden", c"Schwerer: Jeder Treffer kostet doppelt so viele Herzen.", pre: None, post: Some(post));
+crate::export_mod!(c"Doppelter Schaden", c"Schwerer: Jeder Treffer kostet doppelt so viele Herzen.", pre: None, post: Some(post), games: api::GAMES_ALTTP | api::GAMES_MINISH, icon: Some(include_bytes!("../icon.png")));

@@ -303,6 +303,9 @@ EXPORT int tmc_state_load(const void* in, size_t n) {
     memcpy(sSec[1].p, d + sizeof(h) + sSec[0].n, sSec[1].n);
     Relocate(sSec[0].p, sSec[0].n, &h);
     Relocate(sSec[1].p, sSec[1].n, &h);
+    /* Ziffern auf B/A neu schreiben (leer, falls ausgeblendet) */
+    gHUD.unk_13 = 0x7f;
+    gHUD.unk_14 = 0x7f;
     return 1;
 }
 
@@ -316,6 +319,15 @@ static u8* Resolve(uint32_t addr, int n) {
         return &gEwram[addr - 0x02000000u];
     if (addr >= 0x03000000u && addr + (uint32_t)n <= 0x03008000u)
         return &gIwram[addr - 0x03000000u];
+    /* Paletten (Hintergrund, dann Figuren), Grafikspeicher, Sprite-Tabelle – für Mods */
+    if (addr >= 0x05000000u && addr + (uint32_t)n <= 0x05000200u)
+        return (u8*)gBgPltt + (addr - 0x05000000u);
+    if (addr >= 0x05000200u && addr + (uint32_t)n <= 0x05000400u)
+        return (u8*)gObjPltt + (addr - 0x05000200u);
+    if (addr >= 0x06000000u && addr + (uint32_t)n <= 0x06018000u)
+        return &gVram[addr - 0x06000000u];
+    if (addr >= 0x07000000u && addr + (uint32_t)n <= 0x07000400u)
+        return (u8*)gOamMem + (addr - 0x07000000u);
     return NULL;
 }
 
@@ -944,15 +956,10 @@ EXPORT void tmc_hide_counts(int on) {
     gTmcCoreCountsHidden = on;
 }
 
-static int IsCountedItem(u8 i) {
-    return i == 7 || i == 8 || i == 9 || i == 10;
-}
 
 void TmcCore_UpdateHideCounts(void) {
-    const u8* eq = Resolve(0x02002AF4u, 2);
-    /* die Ziffern schreibt das Spiel schon leer (gTmcCoreCountsHidden); beim Zeichnen zusätzlich leeren nur im
-     * Spiel – im Pausenmenü liegen auf diesen Kacheln die großen Item-Grafiken von A und B */
-    gTmcCoreHideCounts = sHideCountsOn && eq != NULL && gMain.substate != GAMEMAIN_SUBTASK &&
-                         (IsCountedItem(eq[0]) || IsCountedItem(eq[1]));
+    /* die Ziffern schreibt das Spiel schon leer (gTmcCoreCountsHidden, Patch in ui.c) – beim Zeichnen nichts mehr
+     * leeren: diese Kacheln gehören im Menü und bei Aufnahmen oft zu Item-Grafiken (Feuerstab, A/B im Menü) */
+    gTmcCoreHideCounts = 0;
 }
 

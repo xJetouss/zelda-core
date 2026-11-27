@@ -455,7 +455,7 @@ patch('port/port_ppu.cpp', [
     /* Zelda Core: Ziffern der Anzahl bei Aufnahmen ausblenden */
     uint8_t coreDigits[0x80];
     extern int gTmcCoreHideCounts;
-    const bool coreHideDigits = gTmcCoreHosted && (gTmcCoreLayers != 0x0F || gTmcCoreHideCounts);
+    const bool coreHideDigits = gTmcCoreHosted && gTmcCoreHideCounts;
     if (coreHideDigits) {
         memcpy(coreDigits, &gVram[0x10000 + 0x11a * 0x20], 0x40);
         memcpy(coreDigits + 0x40, &gVram[0x10000 + 0x126 * 0x20], 0x40);

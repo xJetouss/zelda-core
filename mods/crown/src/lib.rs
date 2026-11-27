@@ -1,4 +1,4 @@
-//! Königskrone: Link trägt eine goldene Krone (Bild aus einer PNG-Datei über dem Spielbild).
+//! Königskrone: Link trägt eine goldene Krone (beide Spiele).
 
 #[path = "../../../assets/mod_template/src/api.rs"]
 mod api;
@@ -28,13 +28,22 @@ extern "C" fn post(api: *const Api) {
         }
         ID.store(id, Ordering::Relaxed);
     }
+    // sanft auf und ab
+    let bob = ((g.frame() / 12) % 2) as i32;
+    if g.is_minish() {
+        if !g.mc_in_game() {
+            return;
+        }
+        // Mitte der Füße -> über dem Kopf (Link ist etwa 20 Pixel groß)
+        let (x, y) = g.mc_link_on_screen();
+        g.image(id, x - 8, y - 30 - bob, 0, 0, 0xFFFFFFFF);
+        return;
+    }
     if !matches!(g.read8(0x7E0010), 0x07 | 0x09 | 0x0B) {
         return;
     }
     let (x, y) = g.link_on_screen();
-    // sanft auf und ab
-    let bob = ((g.frame() / 12) % 2) as i32;
     g.image(id, x, y - 10 - bob, 0, 0, 0xFFFFFFFF);
 }
 
-crate::export_mod!(c"Königskrone", c"Link trägt eine goldene Krone (Bild aus einer PNG-Datei über dem Spielbild).", pre: None, post: Some(post));
+crate::export_mod!(c"Königskrone", c"Link trägt eine goldene Krone (Bild aus einer PNG-Datei über dem Spielbild).", pre: None, post: Some(post), games: api::GAMES_ALTTP | api::GAMES_MINISH, icon: Some(include_bytes!("../icon.png")));

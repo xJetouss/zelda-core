@@ -352,7 +352,8 @@ pub fn equip(s: &mut Snes, e: Entry) -> bool {
     let saved = s.bus.joy[0];
     let mut phase = 0;
     let mut ok = false;
-    for f in 0..400 {
+    let mut calm = 0;
+    for f in 0..600 {
         let m = r8(s, 0x7E0010);
         let sub = r8(s, 0x7E0011);
         let press = match phase {
@@ -360,7 +361,7 @@ pub fn equip(s: &mut Snes, e: Entry) -> bool {
                 if m == 0x0E {
                     phase = 1;
                 }
-                f % 4 < 2
+                phase == 0 && f % 4 < 2
             }
             1 => {
                 if sub == 0x01 || f > 250 {
@@ -369,19 +370,34 @@ pub fn equip(s: &mut Snes, e: Entry) -> bool {
                 false
             }
             2 => {
+                // im Bild, in dem das Menü zugeht, nicht nochmal drücken (sonst öffnet es sich wieder)
                 if m != 0x0E {
                     phase = 3;
                 }
-                f % 4 < 2
+                phase == 2 && f % 4 < 2
             }
-            _ => false,
+            _ => {
+                // Zelda-3-Modus: ein Druck kommt erst ein Bild später an – öffnet sich das Menü danach wieder,
+                // nochmal schließen
+                if m == 0x0E {
+                    phase = 1;
+                    calm = 0;
+                }
+                false
+            }
         };
         s.bus.joy[0] = if press { 0x1000 } else { 0 };
         s.run_frame();
         s.bus.apu.dsp.out.clear();
+        // fertig erst, wenn das Spiel einige Bilder ohne Tastendruck ruhig im Spiel bleibt
         if phase == 3 && r8(s, 0x7E0010) == start && r8(s, 0x7E0011) == 0 {
-            ok = true;
-            break;
+            calm += 1;
+            if calm >= 8 {
+                ok = true;
+                break;
+            }
+        } else {
+            calm = 0;
         }
     }
     s.bus.joy[0] = saved;
@@ -496,6 +512,42 @@ impl QuickMenu {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    /// Schnellmenü: jedes Item ausrüsten (Kopie des Spielstands, `Z3=1`: Zelda-3-Modus) – danach muss das Spielmenü
+    /// wieder zu sein
+    #[test]
+    #[ignore]
+    fn dev_qm_equip() {
+        let Some((rom, sram, path)) = crate::recomp::app_rom_for_tests() else { return };
+        let mut s = Snes::new(Arc::new(rom), sram, false);
+        s.load_state(&std::fs::read(path.with_extension("ss1")).unwrap()).unwrap();
+        for _ in 0..3 {
+            s.run_frame();
+        }
+        if std::env::var_os("Z3").is_some() {
+            crate::z3::sync(&mut s, true).unwrap();
+        } else {
+            crate::recomp::sync(&mut s, true);
+        }
+        for _ in 0..60 {
+            s.run_frame();
+            s.bus.apu.dsp.out.clear();
+        }
+        println!("can_use {} modus {:02X}", can_use(&s), r8(&s, 0x7E0010));
+        let list = entries(&s);
+        for held in [0u16, 0x0200, 0x0100] {
+            for e in &list {
+                s.bus.joy[0] = held;
+                let ok = equip(&mut s, *e);
+                for _ in 0..5 {
+                    s.bus.joy[0] = held;
+                    s.run_frame();
+                    s.bus.apu.dsp.out.clear();
+                }
+                println!("gehalten {held:04X} Item {:2} ok {ok} -> Modus {:02X}/{:02X} Y={}", e.idx, r8(&s, 0x7E0010), r8(&s, 0x7E0011), r8(&s, 0x7E0202));
+            }
+        }
+    }
 
     #[test]
     #[ignore]

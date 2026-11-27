@@ -7,25 +7,39 @@
       "name_en": "Enemy health bars",
       "desc": "Zeigt über jedem Gegner, wie viel Leben er noch hat.",
       "desc_en": "Shows how much health each enemy has left.",
-      "version": "0.3.0"
+      "version": "0.4.0",
+      "icon": "enemy_hp.png",
+      "games": [
+        "alttp"
+      ]
     },
     {
       "id": "speedrun",
       "file": "speedrun.dll",
       "name": "Speedrun-Timer",
       "name_en": "Speedrun timer",
-      "desc": "Spielzeit oben links, mit Zwischenzeiten für jedes Amulett und jeden Kristall.",
-      "desc_en": "In-game time top left, with splits for every pendant and crystal.",
-      "version": "0.3.0"
+      "desc": "Spielzeit oben links, mit Zwischenzeiten (Amulette und Kristalle bzw. die vier Elemente).",
+      "desc_en": "In-game time top left, with splits (pendants and crystals, or the four elements).",
+      "version": "0.4.0",
+      "icon": "speedrun.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
     },
     {
       "id": "info_hud",
       "file": "info_hud.dll",
       "name": "Info-Anzeige",
       "name_en": "Info HUD",
-      "desc": "Position, Gebiet/Raum, Gegnerzahl und Lag-Bilder unten am Rand.",
-      "desc_en": "Position, area/room, enemy count and lag frames at the bottom.",
-      "version": "0.3.0"
+      "desc": "Position, Gebiet und Raum unten am Rand (A Link to the Past: Gegner und Lag-Bilder, The Minish Cap: besiegte Gegner).",
+      "desc_en": "Position, area and room at the bottom (A Link to the Past: enemies and lag frames, The Minish Cap: enemies defeated).",
+      "version": "0.4.0",
+      "icon": "info_hud.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
     },
     {
       "id": "slowmo",
@@ -34,7 +48,12 @@
       "name_en": "Slow motion (hold L)",
       "desc": "Solange L gedrückt ist, läuft das Spiel mit halber Geschwindigkeit.",
       "desc_en": "While L is held the game runs at half speed.",
-      "version": "0.3.0"
+      "version": "0.4.0",
+      "icon": "slowmo.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
     },
     {
       "id": "hard_damage",
@@ -43,7 +62,12 @@
       "name_en": "Double damage",
       "desc": "Schwerer: Jeder Treffer kostet doppelt so viele Herzen.",
       "desc_en": "Harder: every hit costs twice as many hearts.",
-      "version": "0.3.0"
+      "version": "0.4.0",
+      "icon": "hard_damage.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
     },
     {
       "id": "one_hit",
@@ -52,7 +76,12 @@
       "name_en": "One-hit mode",
       "desc": "Hardcore: Jeder Treffer ist tödlich (Feen retten weiterhin).",
       "desc_en": "Hardcore: every hit is fatal (fairies still save you).",
-      "version": "0.3.0"
+      "version": "0.4.0",
+      "icon": "one_hit.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
     },
     {
       "id": "double_rupees",
@@ -61,7 +90,12 @@
       "name_en": "Double rupees",
       "desc": "Jede eingesammelte Rubine zählt doppelt.",
       "desc_en": "Every collected rupee counts twice.",
-      "version": "0.3.0"
+      "version": "0.4.0",
+      "icon": "double_rupees.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
     },
     {
       "id": "heart_regen",
@@ -70,7 +104,12 @@
       "name_en": "Heart regeneration",
       "desc": "Im Spiel alle 8 Sekunden ein halbes Herz zurück.",
       "desc_en": "In game, half a heart back every 8 seconds.",
-      "version": "0.3.0"
+      "version": "0.4.0",
+      "icon": "heart_regen.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
     },
     {
       "id": "magic_regen",
@@ -79,7 +118,11 @@
       "name_en": "Magic regeneration",
       "desc": "Magie füllt sich langsam von selbst wieder auf.",
       "desc_en": "Magic slowly refills by itself.",
-      "version": "0.3.0"
+      "version": "0.4.0",
+      "icon": "magic_regen.png",
+      "games": [
+        "alttp"
+      ]
     },
     {
       "id": "day_night",
@@ -88,7 +131,12 @@
       "name_en": "Day & night",
       "desc": "Auf der Oberwelt wird es alle 6 Minuten Abend und Nacht, dann wieder Tag. Oben rechts zeigt eine Uhr die Tageszeit.",
       "desc_en": "On the overworld it turns to evening and night every 6 minutes, then day again. A clock top right shows the time of day.",
-      "version": "0.3.1"
+      "version": "0.4.0",
+      "icon": "day_night.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
     },
     {
       "id": "tunic_colors",
@@ -97,7 +145,11 @@
       "name_en": "Rainbow tunic",
       "desc": "Links Tunika wechselt fließend durch alle Farben (Sprite-Palette).",
       "desc_en": "Link's tunic smoothly cycles through all colours (sprite palette).",
-      "version": "0.3.0"
+      "version": "0.4.0",
+      "icon": "tunic_colors.png",
+      "games": [
+        "alttp"
+      ]
     },
     {
       "id": "rainbow_enemies",
@@ -106,7 +158,11 @@
       "name_en": "Colourful enemies",
       "desc": "Alle Gegner und Figuren schillern in wechselnden Farben (Sprite-Paletten 1–6).",
       "desc_en": "All enemies and characters shimmer in changing colours (sprite palettes 1–6).",
-      "version": "0.3.0"
+      "version": "0.4.0",
+      "icon": "rainbow_enemies.png",
+      "games": [
+        "alttp"
+      ]
     },
     {
       "id": "crown",
@@ -115,7 +171,12 @@
       "name_en": "Royal crown",
       "desc": "Link trägt eine goldene Krone (Bild aus einer PNG-Datei über dem Spielbild).",
       "desc_en": "Link wears a golden crown (image from a PNG file over the game).",
-      "version": "0.3.0"
+      "version": "0.4.0",
+      "icon": "crown.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
     },
     {
       "id": "coin_sound",
@@ -124,16 +185,26 @@
       "name_en": "Coin chime",
       "desc": "Jede Rubine klingt zusätzlich wie eine Münze (eigener Ton über die Ton-Schnittstelle).",
       "desc_en": "Every rupee also chimes like a coin (own sound via the sound interface).",
-      "version": "0.3.0"
+      "version": "0.4.0",
+      "icon": "coin_sound.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
     },
     {
       "id": "full_supply",
       "file": "full_supply.dll",
       "name": "Voller Vorrat",
       "name_en": "Full supply",
-      "desc": "Bomben, Pfeile und Magie bleiben immer voll (sobald du sie hast).",
-      "desc_en": "Bombs, arrows and magic always stay full (once you have them).",
-      "version": "0.3.0"
+      "desc": "Bomben und Pfeile (in A Link to the Past auch Magie) bleiben immer voll, sobald du sie hast.",
+      "desc_en": "Bombs and arrows (in A Link to the Past also magic) always stay full once you have them.",
+      "version": "0.4.0",
+      "icon": "full_supply.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
     }
   ]
 }

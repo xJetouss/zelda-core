@@ -67,12 +67,67 @@ pub fn hue(c: u16, deg: f32) -> u16 {
     to(f(hh + 1.0 / 3.0)) | to(f(hh)) << 5 | to(f(hh - 1.0 / 3.0)) << 10
 }
 
+// ---- beide Spiele (A Link to the Past und The Minish Cap)
+
+use crate::api::minish as mc;
+
+/// Link steht im normalen Spiel (kein Menü, kein Übergang)
+pub fn in_game_any(g: &Game) -> bool {
+    if g.is_minish() { g.mc_in_game() } else { g.in_game() }
+}
+
+/// Werte zählen „echt“ (nicht beim Laden eines Spielstands): im Spiel oder im Menü
+pub fn playing_any(g: &Game) -> bool {
+    if g.is_minish() { g.mc_in_game() || g.read8(mc::INFO_MENU) != 0 } else { playing(g) }
+}
+
+/// Leben (8 = 1 Herz)
+pub fn hp(g: &Game) -> u8 {
+    g.read8(if g.is_minish() { mc::HEALTH } else { HP })
+}
+pub fn set_hp(g: &Game, v: u8) {
+    g.write8(if g.is_minish() { mc::HEALTH } else { HP }, v)
+}
+pub fn hp_max(g: &Game) -> u8 {
+    g.read8(if g.is_minish() { mc::MAX_HEALTH } else { HP_MAX })
+}
+
+/// Link auf dem normalen Weg sterben lassen
+pub fn kill(g: &Game) {
+    if g.is_minish() {
+        g.write8(mc::HEALTH, 0);
+    } else {
+        // 160 = 20 Herzen, mehr als Link haben kann (0xFF wirkt im Spiel nicht tödlich)
+        g.write8(DAMAGE, 0xA0);
+    }
+}
+
+pub fn rupees(g: &Game) -> u16 {
+    g.read16(if g.is_minish() { mc::RUPEES } else { RUPEES })
+}
+pub fn set_rupees(g: &Game, v: u16) {
+    g.write16(if g.is_minish() { mc::RUPEES } else { RUPEES }, v)
+}
+/// höchstens so viele Rubine (The Minish Cap: je nach Brieftasche)
+pub fn rupee_cap(g: &Game) -> u16 {
+    if g.is_minish() {
+        [100, 300, 500, 999][(g.read8(mc::WALLET) as usize).min(3)]
+    } else {
+        999
+    }
+}
+
 /// Mod-Beschreibung und Einstiegspunkt erzeugen
+/// (`games`: `api::GAMES_…`, `icon`: PNG-Daten für die Mod-Liste)
 #[macro_export]
 macro_rules! export_mod {
     ($name:expr, $desc:expr, pre: $pre:expr, post: $post:expr) => {
+        crate::export_mod!($name, $desc, pre: $pre, post: $post, games: api::GAMES_ALTTP, icon: None);
+    };
+    ($name:expr, $desc:expr, pre: $pre:expr, post: $post:expr, games: $games:expr, icon: $icon:expr) => {
         static INFO: api::ModInfo = api::ModInfo {
-            abi: api::PASTLINK_MOD_ABI,
+            // nur A Link to the Past: Version 3 – läuft dann auch mit älteren Fassungen von Zelda Core
+            abi: if $games == api::GAMES_ALTTP { 3 } else { api::PASTLINK_MOD_ABI },
             name: $name.as_ptr(),
             description: $desc.as_ptr(),
             pre_frame: $pre,
@@ -85,6 +140,25 @@ macro_rules! export_mod {
         #[no_mangle]
         pub extern "C" fn pastlink_mod() -> *const api::ModInfo {
             &INFO
+        }
+        /// Spiele, in denen die Mod läuft
+        #[no_mangle]
+        pub extern "C" fn pastlink_mod_games() -> u32 {
+            $games
+        }
+        /// Bild der Mod (PNG) für die Mod-Liste
+        #[no_mangle]
+        pub extern "C" fn pastlink_mod_icon(len: *mut u32) -> *const u8 {
+            let icon: Option<&'static [u8]> = $icon;
+            match icon {
+                Some(b) => {
+                    if !len.is_null() {
+                        unsafe { *len = b.len() as u32 };
+                    }
+                    b.as_ptr()
+                }
+                None => std::ptr::null(),
+            }
         }
     };
 }

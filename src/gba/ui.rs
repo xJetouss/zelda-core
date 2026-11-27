@@ -351,7 +351,7 @@ impl App {
         if blocked {
             self.gba.acc = 0.0;
         } else {
-            self.gba.acc += dt * g.fps * if rewinding { 1.0 } else { speed };
+            self.gba.acc += dt * g.fps * if rewinding { 1.0 } else { speed * self.mods.speed() as f64 };
             n = (self.gba.acc.floor() as u32).min(16);
             self.gba.acc -= n as f64;
             if n == 16 {
@@ -380,7 +380,11 @@ impl App {
             }
         } else {
             for _ in 0..n {
-                g.run_frame(pad);
+                // Mods (The Minish Cap): vor dem Bild dürfen sie die Tasten ändern, danach zeichnen/schreiben
+                let mut p = pad;
+                self.mods.gba_frame(g, &mut p, &self.s.mods_on, false);
+                g.run_frame(p);
+                self.mods.gba_frame(g, &mut p, &self.s.mods_on, true);
                 self.gba.tick = self.gba.tick.wrapping_add(1);
                 // wie bei ALttP: alle 2 Bilder sichern, im Turbo/×2 alle 8
                 if self.s.rewind && self.gba.tick % (if turbo || double { 8 } else { 2 }) == 0 {
@@ -413,6 +417,9 @@ impl App {
         // Ton: nur bei normalem Tempo (sonst würde er sich stauen)
         self.gba.abuf.clear();
         g.take_audio(&mut self.gba.abuf);
+        // Töne und Meldungen der Mods
+        self.mods.mix(&mut self.gba.abuf);
+        let mod_logs = self.mods.take_logs();
         let audio_ok = !self.s.mute && !(turbo && self.s.mute_turbo) && (speed - 1.0).abs() < 0.01 && !rewinding;
         if let Some(a) = &self.audio {
             a.set_params(self.s.volume, self.s.latency_ms);
@@ -429,6 +436,9 @@ impl App {
         }
         self.gba_map_update();
         self.gba_upload(ctx);
+        for m in mod_logs {
+            self.msg(m);
+        }
     }
 
     /// The Minish Cap: Item-Leiste (Steuerkreuz ← = Y, ↓ = B, → = A halten, mit Stick oder L/R wählen, loslassen =
@@ -702,6 +712,19 @@ impl App {
             let imgs: Vec<Vec<u8>> = ids.iter().map(|i| self.gba.icons_rgba[i].clone()).collect();
             if std::env::var_os("PASTLINK_ICON_LOG").is_some() {
                 eprintln!("B-Aufnahmen {ids:?}, Kreis {}", self.gba.ring_raw.is_some());
+            }
+            // Entwicklung: Rohaufnahmen des B-Felds speichern (PASTLINK_DUMP_ICONS = Ordner)
+            if let Ok(dir) = std::env::var("PASTLINK_DUMP_ICONS") {
+                let save = |name: String, img: &[u8]| {
+                    let px: Vec<Color32> = img.chunks_exact(4).map(|p| if p[3] == 0 { Color32::from_rgb(255, 0, 255) } else { Color32::from_rgb(p[0], p[1], p[2]) }).collect();
+                    crate::devtest_bmp(&format!("{dir}/{name}.bmp"), super::ICON_W, super::ICON_H, &px);
+                };
+                if let Some(r) = &self.gba.ring_raw {
+                    save("ring".into(), r);
+                }
+                for (i, img) in ids.iter().zip(&imgs) {
+                    save(format!("b{i}"), img);
+                }
             }
             if imgs.len() >= 3 {
                 for (i, img) in ids.iter().zip(super::strip_ring(&imgs)) {
@@ -1121,6 +1144,8 @@ impl App {
         }
         let gp_game = r.width() / gw;
         self.gba_draw_y(painter, r, gp_game);
+        // Zeichnungen der Mods (Spielpixel)
+        self.mods.draw_h(painter, r, gw as usize, gh as usize, 0);
         // eigene Karte über dem Spielbild (ganze Fläche) – oder im eigenen Fenster
         if !self.s.map_own_window {
             self.gba_map_draw(area, ctx);

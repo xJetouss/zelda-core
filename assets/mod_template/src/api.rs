@@ -1,4 +1,5 @@
-//! Zelda Core Mod-Schnittstelle (C-ABI, Version 3). Mods laufen nur im Recompiled-Modus (RC).
+//! Zelda Core Mod-Schnittstelle (C-ABI, Version 4). Mods laufen in A Link to the Past im Recompiled-Modus (RC)
+//! und – ab Version 4 – in The Minish Cap (PC-Fassung, `tmc_core.dll`).
 //!
 //! Diese Datei ist in der App und in jeder Mod dieselbe. Nicht ändern: Die App prüft `PASTLINK_MOD_ABI`.
 //!
@@ -14,17 +15,37 @@
 //! - **Bilder** über dem Spielbild zeichnen (PNG oder RGBA), dazu Rechtecke und Text,
 //! - **Töne** abspielen (PCM, z. B. aus einer WAV-Datei, siehe `wav_pcm`),
 //! - das Spieltempo ändern.
+//!
+//! **Spiele (ab Version 4):** Eine Mod sagt mit dem Export `pastlink_mod_games() -> u32`, für welche Spiele sie
+//! gedacht ist (`GAMES_ALTTP`, `GAMES_MINISH`, beide verodert). Ohne diesen Export gilt sie nur für A Link to the
+//! Past. Welches Spiel gerade läuft, steht in `Api::game`. In The Minish Cap sind die Adressen GBA-Adressen
+//! (EWRAM `0x02000000..`, IWRAM `0x03000000..`, Spielstand `gSave` ab `0x02002A40`), gezeichnet wird in
+//! GBA-Pixeln (`Api::screen_w` × `Api::screen_h`, im Breitbild breiter als 240). Hooks, Register, ROM und
+//! `vram_patch`/`cgram_patch` gibt es dort nicht.
+//!
+//! **Icon (ab Version 4):** Mit dem Export `pastlink_mod_icon(len: *mut u32) -> *const u8` (PNG-Daten, am
+//! besten 32×32) zeigt die Mod-Liste ein eigenes Bild.
 
 #![allow(dead_code)]
 
 use std::ffi::{c_char, c_void};
 
 /// Versionsnummer der Schnittstelle
-pub const PASTLINK_MOD_ABI: u32 = 3;
+pub const PASTLINK_MOD_ABI: u32 = 4;
+
+/// `Api::game`: A Link to the Past
+pub const GAME_ALTTP: u32 = 0;
+/// `Api::game`: The Minish Cap
+pub const GAME_MINISH: u32 = 1;
+/// `pastlink_mod_games()`: läuft in A Link to the Past
+pub const GAMES_ALTTP: u32 = 1;
+/// `pastlink_mod_games()`: läuft in The Minish Cap
+pub const GAMES_MINISH: u32 = 2;
 
 /// Speicherbereiche für `mem_read` / `mem_write`
 pub mod space {
     /// SNES-Adressen: WRAM `0x7E0000..=0x7FFFFF`, SRAM `0x700000..=0x70FFFF`
+    /// (The Minish Cap: GBA-Adressen EWRAM `0x02000000..`, IWRAM `0x03000000..`)
     pub const BUS: u32 = 0;
     /// Grafikspeicher (Byte-Adresse 0..0x10000)
     pub const VRAM: u32 = 1;
@@ -34,6 +55,56 @@ pub mod space {
     pub const OAM: u32 = 3;
     /// ROM-Abbild im Speicher (Dateioffset ohne Header)
     pub const ROM: u32 = 4;
+}
+
+/// The Minish Cap: wichtige Adressen (GBA) und Zusatz-Infos der App
+pub mod minish {
+    /// Spielstand im Speicher (`gSave`)
+    pub const SAVE: u32 = 0x0200_2A40;
+    /// Spielerwerte (`gSave.stats`)
+    pub const STATS: u32 = SAVE + 0xA8;
+    /// Herzteile (0..3)
+    pub const HEART_PIECES: u32 = STATS + 0x01;
+    /// Leben (8 = 1 Herz, 0 = tot)
+    pub const HEALTH: u32 = STATS + 0x02;
+    /// höchstes Leben (8 je Herz)
+    pub const MAX_HEALTH: u32 = STATS + 0x03;
+    pub const BOMBS: u32 = STATS + 0x04;
+    pub const ARROWS: u32 = STATS + 0x05;
+    /// Bombentasche (0 = keine) / Köcher (0 = keiner)
+    pub const BOMB_BAG: u32 = STATS + 0x06;
+    pub const QUIVER: u32 = STATS + 0x07;
+    /// ausgerüstet: A, dann B
+    pub const EQUIPPED: u32 = STATS + 0x0C;
+    /// Rubine (16 Bit)
+    pub const RUPEES: u32 = STATS + 0x18;
+    /// Muscheln (16 Bit)
+    pub const SHELLS: u32 = STATS + 0x1A;
+    /// Brieftasche (0..3: 100, 300, 500, 999 Rubine)
+    pub const WALLET: u32 = STATS + 0x00;
+    /// besiegte Gegner (32 Bit)
+    pub const ENEMIES_KILLED: u32 = SAVE + 0x50;
+
+    /// Zusatz-Infos der App (nur lesen): ab dieser Adresse
+    pub const INFO: u32 = 0x0F00_0000;
+    /// 1 = Link steht im normalen Spiel (kein Menü, keine Zwischensequenz mit eigener Anzeige)
+    pub const INFO_IN_GAME: u32 = INFO;
+    /// 1 = Item-/Pausenmenü offen
+    pub const INFO_MENU: u32 = INFO + 0x01;
+    /// Gebiet und Raum
+    pub const INFO_AREA: u32 = INFO + 0x02;
+    pub const INFO_ROOM: u32 = INFO + 0x03;
+    /// 1 = Oberwelt
+    pub const INFO_OVERWORLD: u32 = INFO + 0x04;
+    /// Links Position in der Welt (16 Bit mit Vorzeichen)
+    pub const INFO_LINK_X: u32 = INFO + 0x06;
+    pub const INFO_LINK_Y: u32 = INFO + 0x08;
+    /// Links Position auf dem Bild (Mitte seiner Füße, Zeichen-Pixel)
+    pub const INFO_LINK_SX: u32 = INFO + 0x0A;
+    pub const INFO_LINK_SY: u32 = INFO + 0x0C;
+    /// Kamera (linke obere Ecke in der Welt)
+    pub const INFO_CAM_X: u32 = INFO + 0x0E;
+    pub const INFO_CAM_Y: u32 = INFO + 0x10;
 }
 
 /// CPU-Register für `reg` / `set_reg`
@@ -108,6 +179,14 @@ pub struct Api {
     pub png_tiles: extern "C" fn(ctx: *mut c_void, png: *const u8, len: u32, bpp: u32, out: *mut u16, max_words: u32, pal: *mut u16) -> u32,
     /// Meldung in der App anzeigen (UTF-8, mit 0 abgeschlossen)
     pub log: extern "C" fn(ctx: *mut c_void, text: *const c_char),
+
+    // ---- ab Version 4 (bei `abi` < 4 nicht vorhanden)
+    /// laufendes Spiel: `GAME_ALTTP` oder `GAME_MINISH`
+    pub game: u32,
+    /// Größe des Spielbilds in Pixeln, in denen gezeichnet wird (A Link to the Past 256×224, The Minish Cap
+    /// 240×160 bzw. breiter im Breitbild)
+    pub screen_w: u32,
+    pub screen_h: u32,
 }
 
 /// Beschreibung einer Mod (statisch, lebt so lange wie die DLL)
@@ -139,6 +218,20 @@ pub struct Game<'a>(pub &'a Api);
 impl Game<'_> {
     pub fn frame(&self) -> u64 {
         self.0.frame
+    }
+    /// laufendes Spiel (`GAME_ALTTP` oder `GAME_MINISH`; ältere App: immer A Link to the Past)
+    pub fn game(&self) -> u32 {
+        if self.0.abi >= 4 { self.0.game } else { GAME_ALTTP }
+    }
+    pub fn is_minish(&self) -> bool {
+        self.game() == GAME_MINISH
+    }
+    /// Größe des Spielbilds in Zeichen-Pixeln
+    pub fn screen(&self) -> (i32, i32) {
+        if self.0.abi >= 4 { (self.0.screen_w as i32, self.0.screen_h as i32) } else { (256, 224) }
+    }
+    pub fn read32(&self, addr: u32) -> u32 {
+        self.read16(addr) as u32 | (self.read16(addr + 2) as u32) << 16
     }
     pub fn read8(&self, addr: u32) -> u8 {
         (self.0.read8)(self.0.ctx, addr)
@@ -185,9 +278,21 @@ impl Game<'_> {
     pub fn set_speed(&self, s: f32) {
         (self.0.set_speed)(self.0.ctx, s)
     }
-    /// Link steht im normalen Spiel (Oberwelt oder Dungeon, kein Menü, kein Übergang)
+    /// Link steht im normalen Spiel (Oberwelt oder Dungeon, kein Menü, kein Übergang) – nur A Link to the Past
     pub fn in_game(&self) -> bool {
         matches!(self.read8(0x7E0010), 0x07 | 0x09 | 0x0B) && self.read8(0x7E0011) == 0
+    }
+    /// The Minish Cap: Link steht im normalen Spiel (kein Menü)
+    pub fn mc_in_game(&self) -> bool {
+        self.is_minish() && self.read8(minish::INFO_IN_GAME) != 0
+    }
+    /// The Minish Cap: Links Position auf dem Bild (Mitte seiner Füße, Zeichen-Pixel)
+    pub fn mc_link_on_screen(&self) -> (i32, i32) {
+        (self.read16(minish::INFO_LINK_SX) as i16 as i32, self.read16(minish::INFO_LINK_SY) as i16 as i32)
+    }
+    /// The Minish Cap: (Gebiet, Raum)
+    pub fn mc_area_room(&self) -> (u8, u8) {
+        (self.read8(minish::INFO_AREA), self.read8(minish::INFO_ROOM))
     }
     /// Links Position auf dem Bildschirm (SNES-Pixel, linke obere Ecke seines 16×16-Körpers)
     pub fn link_on_screen(&self) -> (i32, i32) {
