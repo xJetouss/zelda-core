@@ -118,16 +118,37 @@ pub fn rupee_cap(g: &Game) -> u16 {
 }
 
 /// Mod-Beschreibung und Einstiegspunkt erzeugen
-/// (`games`: `api::GAMES_…`, `icon`: PNG-Daten für die Mod-Liste)
+/// (`games`: `api::GAMES_…`, `icon`: PNG-Daten für die Mod-Liste, `settings`: Einstellungen)
+
+/// Einstellung für `settings: &[…]` (Schlüssel, „Deutsch|English“, Art, Standard, min, max)
+#[macro_export]
+macro_rules! setting {
+    ($key:literal, $label:literal, $kind:expr, $def:expr, $min:expr, $max:expr) => {
+        api::Setting { key: $key.as_ptr(), label: $label.as_ptr(), kind: $kind, def: $def, min: $min, max: $max }
+    };
+}
 #[macro_export]
 macro_rules! export_mod {
     ($name:expr, $desc:expr, pre: $pre:expr, post: $post:expr) => {
         crate::export_mod!($name, $desc, pre: $pre, post: $post, games: api::GAMES_ALTTP, icon: None);
     };
     ($name:expr, $desc:expr, pre: $pre:expr, post: $post:expr, games: $games:expr, icon: $icon:expr) => {
+        crate::export_mod!($name, $desc, pre: $pre, post: $post, games: $games, icon: $icon, settings: &[]);
+    };
+    ($name:expr, $desc:expr, pre: $pre:expr, post: $post:expr, games: $games:expr, icon: $icon:expr, settings: $settings:expr) => {
+        static SETTINGS: &[api::Setting] = $settings;
+        /// Einstellungen der Mod (Zahnrad in der Mod-Liste)
+        #[no_mangle]
+        pub extern "C" fn pastlink_mod_settings(n: *mut u32) -> *const api::Setting {
+            if !n.is_null() {
+                unsafe { *n = SETTINGS.len() as u32 };
+            }
+            SETTINGS.as_ptr()
+        }
         static INFO: api::ModInfo = api::ModInfo {
-            // nur A Link to the Past: Version 3 – läuft dann auch mit älteren Fassungen von Zelda Core
-            abi: if $games == api::GAMES_ALTTP { 3 } else { api::PASTLINK_MOD_ABI },
+            // nur A Link to the Past ohne Einstellungen: Version 3 – läuft dann auch mit älteren Fassungen von Zelda
+            // Core; mit The Minish Cap 4, mit Einstellungen 5
+            abi: if !SETTINGS.is_empty() { api::PASTLINK_MOD_ABI } else if $games == api::GAMES_ALTTP { 3 } else { 4 },
             name: $name.as_ptr(),
             description: $desc.as_ptr(),
             pre_frame: $pre,

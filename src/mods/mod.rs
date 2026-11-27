@@ -92,6 +92,25 @@ struct Store {
     patches: Vec<(usize, Patch)>,
     patch_version: u64,
     logs: Vec<String>,
+    /// Einstellungen der Mods (Kennung -> Schlüssel -> Wert), Standardwerte aus der Mod
+    values: HashMap<String, HashMap<String, i32>>,
+    defaults: HashMap<String, HashMap<String, i32>>,
+    /// Werte der App für `app_get` (vor jedem Bild von der App gesetzt)
+    app_vals: HashMap<String, i64>,
+    /// Wünsche der Mods an die App: (Aktion statt Wert?, Schlüssel, Wert) – nach dem Bild ausgeführt
+    app_ops: Vec<(bool, String, i64)>,
+}
+
+/// Eine Einstellung einer Mod (aus `pastlink_mod_settings`)
+#[derive(Clone)]
+pub struct SettingDef {
+    pub key: String,
+    pub label_de: String,
+    pub label_en: String,
+    pub kind: u32,
+    pub def: i32,
+    pub min: i32,
+    pub max: i32,
 }
 
 /// Das laufende Spiel, auf das eine Mod zugreift
@@ -133,6 +152,8 @@ fn mc_info(g: &crate::gba::Gba, view: Option<[i32; 12]>, menu: bool) -> [u8; 0x4
 /// Zugriff einer Mod auf das laufende Spiel
 pub struct Ctx<'a> {
     pub sys: Sys<'a>,
+    /// Kennung der laufenden Mod (für ihre Einstellungen)
+    pub id: String,
     pub frame: u64,
     out: &'a mut Out,
     store: &'a mut Store,
@@ -397,6 +418,21 @@ impl Ctx<'_> {
             self.store.patch_version += 1;
         }
     }
+    /// Wert der App (Launcher)
+    pub fn app_get(&self, key: &str) -> i64 {
+        self.store.app_vals.get(key).copied().unwrap_or(api::app::NONE)
+    }
+    /// Wert der App ändern bzw. Aktion auslösen (die App führt es nach dem Bild aus)
+    pub fn app_op(&mut self, action: bool, key: &str, value: i64) {
+        if self.store.app_ops.len() < 64 {
+            self.store.app_ops.push((action, key.to_string(), value));
+        }
+    }
+    /// Wert einer Einstellung der laufenden Mod
+    pub fn setting(&self, key: &str) -> i32 {
+        let get = |m: &HashMap<String, HashMap<String, i32>>| m.get(&self.id).and_then(|v| v.get(key)).copied();
+        get(&self.store.values).or_else(|| get(&self.store.defaults)).unwrap_or(api::setting::UNSET)
+    }
     pub fn log(&mut self, t: String) {
         if self.store.logs.len() < 16 {
             self.store.logs.push(t);
@@ -485,6 +521,8 @@ pub struct Entry {
     pub games: u32,
     /// eigenes Bild der Mod (RGBA, Breite, Höhe)
     pub icon: Option<Arc<(Vec<u8>, usize, usize)>>,
+    /// Einstellungen, die die Mod anbietet
+    pub settings: Vec<SettingDef>,
     pub m: Box<dyn Mod>,
 }
 
@@ -556,6 +594,26 @@ impl Mods {
         i.list.iter().map(|e| (e.id.clone(), if en { e.name_en.clone() } else { e.name_de.clone() }, if en { e.desc_en.clone() } else { e.desc_de.clone() })).collect()
     }
 
+    /// Einstellungen einer geladenen Mod
+    pub fn settings_of(&self, id: &str) -> Vec<SettingDef> {
+        self.inner.lock().unwrap().list.iter().find(|e| e.id == id).map(|e| e.settings.clone()).unwrap_or_default()
+    }
+
+    /// Werte der App für die Mods (`app_get`)
+    pub fn set_app_state(&self, v: HashMap<String, i64>) {
+        self.inner.lock().unwrap().store.app_vals = v;
+    }
+
+    /// Wünsche der Mods an die App abholen: (Aktion?, Schlüssel, Wert)
+    pub fn take_app_ops(&self) -> Vec<(bool, String, i64)> {
+        std::mem::take(&mut self.inner.lock().unwrap().store.app_ops)
+    }
+
+    /// Werte der Einstellungen aller Mods übernehmen (aus den App-Einstellungen)
+    pub fn set_values(&self, v: &HashMap<String, HashMap<String, i32>>) {
+        self.inner.lock().unwrap().store.values = v.clone();
+    }
+
     /// Spiele und Bild einer geladenen Mod (Kennung wie in `entries`)
     pub fn meta(&self, id: &str) -> Option<(u32, Option<Arc<(Vec<u8>, usize, usize)>>)> {
         let i = self.inner.lock().unwrap();
@@ -564,12 +622,15 @@ impl Mods {
 
     /// Neue DLLs aus dem Mod-Ordner laden (schon geladene bleiben)
     pub fn load_dlls(&mut self) {
-        // Updates aus dem Shop (`x.dll.new`): ersetzen, solange die alte DLL noch nicht geladen ist
+        // Updates aus dem Shop (`x.dll.new`): alte DLL entladen, ersetzen – gilt sofort, ohne Neustart
         if let Ok(rd) = std::fs::read_dir(Self::dir()) {
             for p in rd.filter_map(|e| e.ok().map(|e| e.path())) {
                 if p.extension().is_some_and(|e| e == "new") {
                     let dll = p.with_extension("");
-                    if !self.loaded.contains(&dll) && std::fs::rename(&p, &dll).is_err() {
+                    if let Some(f) = dll.file_name().map(|f| f.to_string_lossy().to_string()) {
+                        self.unload(&f);
+                    }
+                    if std::fs::rename(&p, &dll).is_err() {
                         let _ = std::fs::remove_file(&p);
                     }
                 }
@@ -584,12 +645,60 @@ impl Mods {
             }
             self.loaded.push(p.clone());
             match dll::load(&p) {
-                Ok(e) => self.inner.lock().unwrap().list.push(e),
+                Ok(e) => {
+                    let mut i = self.inner.lock().unwrap();
+                    let d: HashMap<String, i32> = e.settings.iter().map(|s| (s.key.clone(), s.def)).collect();
+                    i.store.defaults.insert(e.id.clone(), d);
+                    i.list.push(e);
+                }
                 Err(e) => self.errors.push(format!("{}: {e}", p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default())),
             }
         }
         // neuer Abgleich beim nächsten Bild
         self.on_ids = vec!["\u{0}".into()];
+    }
+
+    /// Mod-DLL entladen (Dateiname, z. B. `crown.dll`); Rückgabe: war geladen
+    pub fn unload(&mut self, file: &str) -> bool {
+        let id = format!("dll:{file}");
+        let mut i = self.inner.lock().unwrap();
+        let before = i.list.len();
+        i.list.retain(|e| !e.id.eq_ignore_ascii_case(&id));
+        let removed = i.list.len() != before;
+        if removed {
+            // Nummern in den Listen stimmen nicht mehr: beim nächsten Bild neu abgleichen
+            i.on.clear();
+            i.hook_map.clear();
+            i.store.patches.clear();
+            i.store.patch_version += 1;
+        }
+        drop(i);
+        self.loaded.retain(|p| !p.file_name().is_some_and(|f| f.to_string_lossy().eq_ignore_ascii_case(file)));
+        if removed {
+            self.on_ids = vec!["\u{0}".into()];
+            self.hook_set = None;
+            self.hook_version += 1;
+            self.shown.clear();
+        }
+        removed
+    }
+
+    /// Mod deinstallieren: entladen, DLL und Bild aus dem Mod-Ordner löschen
+    pub fn uninstall(&mut self, file: &str) -> Result<(), String> {
+        if file.contains(['/', '\\']) || !file.to_ascii_lowercase().ends_with(".dll") {
+            return Err("ungültiger Dateiname".into());
+        }
+        self.unload(file);
+        let d = Self::dir();
+        let dll = d.join(file);
+        for p in [dll.with_extension("dll.new"), dll.with_extension("png")] {
+            let _ = std::fs::remove_file(p);
+        }
+        if dll.exists() {
+            std::fs::remove_file(&dll).map_err(|e| e.to_string())?;
+        }
+        self.shop.forget(file);
+        Ok(())
     }
 
     /// Eingeschaltete Mods übernehmen und die Hooks am Spiel anbringen (nur im Recompiled-Modus)
@@ -628,7 +737,7 @@ impl Mods {
                     let g = &mut *g;
                     let Some(ks) = g.hook_map.get(&a).cloned() else { return };
                     for k in ks {
-                        let mut ctx = Ctx { sys: Sys::Snes { cpu: &mut *c, bus: &mut *b }, frame: g.frame, out: &mut g.out, store: &mut g.store, cur: k };
+                        let mut ctx = Ctx { sys: Sys::Snes { cpu: &mut *c, bus: &mut *b }, id: g.list[k].id.clone(), frame: g.frame, out: &mut g.out, store: &mut g.store, cur: k };
                         g.list[k].m.on_hook(a, &mut ctx);
                     }
                 });
@@ -649,7 +758,7 @@ impl Mods {
             g.out.speed = 1.0;
         }
         for &k in &g.on {
-            let mut ctx = Ctx { sys: Sys::Snes { cpu: &mut snes.cpu, bus: &mut snes.bus }, frame: g.frame, out: &mut g.out, store: &mut g.store, cur: k };
+            let mut ctx = Ctx { sys: Sys::Snes { cpu: &mut snes.cpu, bus: &mut snes.bus }, id: g.list[k].id.clone(), frame: g.frame, out: &mut g.out, store: &mut g.store, cur: k };
             if post {
                 g.list[k].m.post_frame(&mut ctx);
             } else {
@@ -713,7 +822,7 @@ impl Mods {
         }
         let idx: Vec<usize> = (0..x.list.len()).filter(|&k| on.contains(&x.list[k].id) && x.list[k].games & api::GAMES_MINISH != 0).collect();
         for k in idx {
-            let mut ctx = Ctx { sys: Sys::Gba { g: &mut *g, pad: &mut *pad, view, menu }, frame: x.frame, out: &mut x.out, store: &mut x.store, cur: k };
+            let mut ctx = Ctx { sys: Sys::Gba { g: &mut *g, pad: &mut *pad, view, menu }, id: x.list[k].id.clone(), frame: x.frame, out: &mut x.out, store: &mut x.store, cur: k };
             if post {
                 x.list[k].m.post_frame(&mut ctx);
             } else {
@@ -823,10 +932,21 @@ pub fn export_template(dir: &Path) -> std::io::Result<PathBuf> {
 mod dll {
     use super::api::{Api, ModInfo, PASTLINK_MOD_ABI};
     use super::*;
+    use windows_sys::Win32::Foundation::FreeLibrary;
     use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 
     struct DllMod {
         info: &'static ModInfo,
+        /// geladene DLL (wird beim Entfernen der Mod wieder freigegeben)
+        module: usize,
+    }
+
+    impl Drop for DllMod {
+        fn drop(&mut self) {
+            if self.module != 0 {
+                unsafe { FreeLibrary(self.module as _) };
+            }
+        }
     }
 
     fn cx<'a>(ctx: *mut c_void) -> &'a mut Ctx<'a> {
@@ -916,6 +1036,29 @@ mod dll {
         }
         t.len() as u32
     }
+    extern "C" fn setting(ctx: *mut c_void, key: *const std::ffi::c_char) -> i32 {
+        if key.is_null() {
+            return super::api::setting::UNSET;
+        }
+        let k = unsafe { CStr::from_ptr(key) }.to_string_lossy();
+        cx(ctx).setting(&k)
+    }
+    fn key_of(k: *const std::ffi::c_char) -> Option<String> {
+        (!k.is_null()).then(|| unsafe { CStr::from_ptr(k) }.to_string_lossy().into_owned())
+    }
+    extern "C" fn app_get(ctx: *mut c_void, key: *const std::ffi::c_char) -> i64 {
+        key_of(key).map_or(super::api::app::NONE, |k| cx(ctx).app_get(&k))
+    }
+    extern "C" fn app_set(ctx: *mut c_void, key: *const std::ffi::c_char, v: i64) {
+        if let Some(k) = key_of(key) {
+            cx(ctx).app_op(false, &k, v)
+        }
+    }
+    extern "C" fn app_do(ctx: *mut c_void, key: *const std::ffi::c_char, v: i64) {
+        if let Some(k) = key_of(key) {
+            cx(ctx).app_op(true, &k, v)
+        }
+    }
     extern "C" fn log(ctx: *mut c_void, t: *const std::ffi::c_char) {
         if !t.is_null() {
             let s = unsafe { CStr::from_ptr(t) }.to_string_lossy().into_owned();
@@ -952,6 +1095,10 @@ mod dll {
             game: c.game(),
             screen_w: c.screen().0,
             screen_h: c.screen().1,
+            setting,
+            app_get,
+            app_set,
+            app_do,
         }
     }
 
@@ -982,7 +1129,7 @@ mod dll {
     pub fn load(p: &Path) -> Result<Entry, String> {
         let wide: Vec<u16> = p.as_os_str().to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
         unsafe {
-            // bleibt bis zum Programmende geladen (die Mod-Daten sind statisch)
+            // bleibt geladen, bis die Mod entfernt wird (Update, Deinstallieren)
             let h = LoadLibraryW(wide.as_ptr());
             if h.is_null() {
                 return Err("DLL lässt sich nicht laden".into());
@@ -1015,15 +1162,33 @@ mod dll {
                     icon = decode_png(std::slice::from_raw_parts(d, n as usize)).map(Arc::new);
                 }
             }
+            let text = |c: *const std::ffi::c_char| if c.is_null() { String::new() } else { CStr::from_ptr(c).to_string_lossy().into_owned() };
+            // ab Version 5: Einstellungen
+            let mut settings = Vec::new();
+            if let Some(st) = GetProcAddress(h, c"pastlink_mod_settings".as_ptr() as *const u8) {
+                let st: extern "C" fn(*mut u32) -> *const super::api::Setting = std::mem::transmute(st);
+                let mut n = 0u32;
+                let d = st(&mut n);
+                if !d.is_null() && n < 64 {
+                    for x in std::slice::from_raw_parts(d, n as usize) {
+                        let key = text(x.key);
+                        if key.is_empty() {
+                            continue;
+                        }
+                        let label = text(x.label);
+                        let (de, en) = label.split_once('|').map(|(a, b)| (a.to_string(), b.to_string())).unwrap_or((label.clone(), label.clone()));
+                        settings.push(SettingDef { key, label_de: de, label_en: en, kind: x.kind, def: x.def, min: x.min, max: x.max });
+                    }
+                }
+            }
             // sonst: gleichnamiges PNG neben der DLL (z. B. aus der Mod-Liste geholt)
             if icon.is_none() {
                 icon = std::fs::read(p.with_extension("png")).ok().and_then(|b| decode_png(&b)).map(Arc::new);
             }
-            let text = |c: *const std::ffi::c_char| if c.is_null() { String::new() } else { CStr::from_ptr(c).to_string_lossy().into_owned() };
             let name = text(info.name);
             let desc = text(info.description);
             let file = p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
-            Ok(Entry { id: format!("dll:{file}"), name_de: name.clone(), name_en: name, desc_de: desc.clone(), desc_en: desc, games, icon, m: Box::new(DllMod { info }) })
+            Ok(Entry { id: format!("dll:{file}"), name_de: name.clone(), name_en: name, desc_de: desc.clone(), desc_en: desc, games, icon, settings, m: Box::new(DllMod { info, module: h as usize }) })
         }
     }
 }
@@ -1183,6 +1348,34 @@ mod tests {
         assert!(m.shown.is_empty());
         let ic = m.inner.lock().unwrap().list.iter().filter(|e| e.icon.is_some()).count();
         println!("Mods mit Bild: {ic}");
+        // Einstellungen: Speedrun-Timer an gezogener Position, Zeitlupe mit 30 %
+        println!("Einstellungen speedrun: {:?}", m.settings_of("dll:speedrun.dll").iter().map(|s| s.key.clone()).collect::<Vec<_>>());
+        let mut vals: HashMap<String, HashMap<String, i32>> = HashMap::new();
+        vals.entry("dll:speedrun.dll".into()).or_default().insert("pos".into(), api::setting::pos(120, 90));
+        vals.entry("dll:slowmo.dll".into()).or_default().insert("percent".into(), 30);
+        m.set_values(&vals);
+        run(&mut m, &mut g, &id("speedrun"), 3, 0);
+        let at = m.shown.iter().find_map(|s| if let Shape::Rect(x, y, ..) = s { Some((*x, *y)) } else { None });
+        println!("speedrun an {at:?}");
+        assert_eq!(at, Some((120, 90)));
+        run(&mut m, &mut g, &id("slowmo"), 2, 0x0020);
+        println!("slowmo 30 %: Tempo {}", m.speed());
+        assert!((m.speed() - 0.3).abs() < 0.01);
+        // Speedrun-Timer zeigt die Spielzeit des Spielstands aus der App (1 Minute)
+        m.set_app_state(HashMap::from([("play_frames".to_string(), 3600i64), ("fps_x100".to_string(), 6000)]));
+        run(&mut m, &mut g, &id("speedrun"), 2, 0);
+        let txt = m.shown.iter().find_map(|s| if let Shape::Text(_, _, _, t) = s { Some(t.clone()) } else { None });
+        println!("speedrun Text {txt:?}");
+        assert_eq!(txt.as_deref(), Some("01:00.00"));
+        // Entladen und wieder laden (Update ohne Neustart)
+        let n0 = m.entries(false).len();
+        assert!(m.unload("speedrun.dll"));
+        assert_eq!(m.entries(false).len(), n0 - 1);
+        let e = dll::load(&PathBuf::from(std::env::var("PASTLINK_MODS_DIR").unwrap()).join("speedrun.dll")).unwrap();
+        m.inner.lock().unwrap().list.push(e);
+        run(&mut m, &mut g, &id("speedrun"), 3, 0);
+        println!("nach Neuladen: {} Zeichnungen", m.shown.len());
+        assert!(!m.shown.is_empty());
     }
 
     /// Alle Mods im RC-Modus prüfen (`Z3=1`: im Zelda-3-Modus)

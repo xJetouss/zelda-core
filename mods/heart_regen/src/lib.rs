@@ -21,7 +21,7 @@ extern "C" fn post(api: *const Api) {
     }
     let mut t = T.lock().unwrap();
     *t += 1;
-    if *t >= 480 {
+    if *t >= g.setting_int("seconds", 8).clamp(1, 120) as u32 * 60 {
         *t = 0;
         let (hp, max) = (hp(&g), hp_max(&g));
         if hp > 0 && hp < max {
@@ -30,4 +30,6 @@ extern "C" fn post(api: *const Api) {
     }
 }
 
-crate::export_mod!(c"Herz-Regeneration", c"Im Spiel alle 8 Sekunden ein halbes Herz zurück.", pre: None, post: Some(post), games: api::GAMES_ALTTP | api::GAMES_MINISH, icon: Some(include_bytes!("../icon.png")));
+crate::export_mod!(c"Herz-Regeneration", c"Im Spiel alle paar Sekunden ein halbes Herz zurück (einstellbar).", pre: None, post: Some(post), games: api::GAMES_ALTTP | api::GAMES_MINISH, icon: Some(include_bytes!("../icon.png")), settings: &[
+    crate::setting!(c"seconds", c"Sekunden je halbes Herz|Seconds per half heart", setting::INT, 8, 1, 60),
+]);

@@ -71,6 +71,7 @@ impl App {
                 self.low_health_hud(&painter, r, ctx);
                 // Zeichnungen der Mods (nur im Recompiled-Modus)
                 self.mods.draw(&painter, r, self.view_w, self.ext);
+                self.mod_place_overlay(&painter, ctx, r, self.view_w, 224, self.ext);
                 self.inventory_overlay(ctx, &painter, area);
                 let ind = if self.turbo_on {
                     Some(format!("⏩ TURBO ×{:.0}", self.s.turbo_speed))
@@ -1040,4 +1041,60 @@ pub(crate) const DOOR: Color32 = Color32::from_rgb(90, 200, 210);
 pub(crate) fn current_dungeon(s: &crate::snes::Snes) -> Option<u8> {
     let d = alttp::ram8(s, 0x7E040C);
     (alttp::ram8(s, 0x7E001B) != 0 && d < 0x1C).then_some(d / 2)
+}
+
+impl App {
+    /// Position einer Mod-Einstellung auf dem Spielbild ziehen: Maus gedrückt halten setzt sie (die Mod zeichnet
+    /// gleich an der neuen Stelle), Enter/Esc/Rechtsklick beendet, Entf nimmt den Standardplatz der Mod.
+    /// `r` = Spielbild auf dem Schirm, `view_w`×`view_h` Spielpixel, `ext` = Breitbild-Rand links
+    pub(crate) fn mod_place_overlay(&mut self, p: &gfx::Painter, ctx: &gfx::Context, r: gfx::Rect, view_w: usize, view_h: usize, ext: usize) {
+        let Some((id, key)) = self.mod_place.clone() else { return };
+        let en = self.s.ui_en;
+        let (kx, ky) = (r.width() / view_w.max(1) as f32, r.height() / view_h.max(1) as f32);
+        let (pos, down, done, reset) = ctx.input(|i| {
+            (i.pointer.hover_pos(), i.pointer.primary_down(), i.key_down(gfx::Key::Enter) || i.key_down(gfx::Key::Escape), i.key_down(gfx::Key::Delete))
+        });
+        let mut changed = false;
+        if let (Some(m), true) = (pos, down) {
+            if r.contains(m) {
+                let gx = ((m.x - r.left()) / kx).round() as i32 - ext as i32;
+                let gy = ((m.y - r.top()) / ky).round() as i32;
+                self.s.mod_values.entry(id.clone()).or_default().insert(key.clone(), crate::mods::api::setting::pos(gx, gy));
+                changed = true;
+            }
+        }
+        if reset {
+            if let Some(v) = self.s.mod_values.get_mut(&id) {
+                v.remove(&key);
+            }
+            changed = true;
+        }
+        if changed {
+            self.mods.set_values(&self.s.mod_values);
+        }
+        // Markierung an der gewählten Stelle
+        if let Some(&v) = self.s.mod_values.get(&id).and_then(|m| m.get(&key)) {
+            let (x, y) = (v as u32 as u16 as i16 as f32, (v as u32 >> 16) as u16 as i16 as f32);
+            let c = gfx::pos2(r.left() + (x + ext as f32) * kx, r.top() + y * ky);
+            let gold = Color32::from_rgb(248, 208, 64);
+            p.line_segment([c - gfx::vec2(10.0, 0.0), c + gfx::vec2(10.0, 0.0)], Stroke::new(2.0f32, gold));
+            p.line_segment([c - gfx::vec2(0.0, 10.0), c + gfx::vec2(0.0, 10.0)], Stroke::new(2.0f32, gold));
+        }
+        let txt = tr(
+            en,
+            "Position ziehen: Maus gedrückt halten und an die Stelle ziehen · Enter/Esc: fertig · Entf: Standard",
+            "Drag the position: hold the mouse and drag it into place · Enter/Esc: done · Del: default",
+        );
+        let font = gfx::FontId::proportional(15.0);
+        let w = (txt.chars().count() as f32 * 7.6).min(r.width() - 20.0);
+        let b = gfx::Rect::from_center_size(gfx::pos2(r.center().x, r.top() + 24.0), gfx::vec2(w + 24.0, 30.0));
+        p.rect_filled(b, 6.0, Color32::from_rgba_unmultiplied(8, 10, 40, 230));
+        p.rect_stroke(b, 6.0, Stroke::new(1.0f32, Color32::from_rgb(248, 208, 64)));
+        p.text(b.center(), gfx::Align2::CENTER_CENTER, txt, font, Color32::WHITE);
+        if done {
+            self.mod_place = None;
+            self.win_mods = true;
+            self.win_mod_settings = Some(id);
+        }
+    }
 }

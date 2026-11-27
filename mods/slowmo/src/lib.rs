@@ -15,10 +15,12 @@ use std::sync::Mutex;
 extern "C" fn pre(api: *const Api) {
     let g = game(api);
     if g.pad() & 0x0020 != 0 {
-        g.set_speed(0.5);
+        g.set_speed(g.setting_int("percent", 50).clamp(10, 95) as f32 / 100.0);
         // L geht nicht ans Spiel
         g.set_pad(g.pad() & !0x0020);
     }
 }
 
-crate::export_mod!(c"Zeitlupe (L halten)", c"Solange L gedrückt ist, läuft das Spiel mit halber Geschwindigkeit.", pre: Some(pre), post: None, games: api::GAMES_ALTTP | api::GAMES_MINISH, icon: Some(include_bytes!("../icon.png")));
+crate::export_mod!(c"Zeitlupe (L halten)", c"Solange L gedrückt ist, läuft das Spiel mit halber Geschwindigkeit.", pre: Some(pre), post: None, games: api::GAMES_ALTTP | api::GAMES_MINISH, icon: Some(include_bytes!("../icon.png")), settings: &[
+    crate::setting!(c"percent", c"Tempo in Prozent|Speed in percent", setting::INT, 50, 10, 90),
+]);

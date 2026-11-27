@@ -12,8 +12,6 @@ use shared::*;
 #[allow(unused_imports)]
 use std::sync::Mutex;
 
-/// Länge eines Tages in Spielbildern (6 Minuten)
-const DAY: u64 = 6 * 60 * 60;
 
 extern "C" fn post(api: *const Api) {
     let g = game(api);
@@ -25,8 +23,10 @@ extern "C" fn post(api: *const Api) {
     if !outside {
         return;
     }
+    // Länge eines Tages in Spielbildern (Einstellung in Minuten)
+    let day = g.setting_int("minutes", 6).clamp(1, 120) as u64 * 60 * 60;
     // Tageszeit 0..1 (0 = Mitternacht, 0.5 = Mittag)
-    let t = (g.frame() % DAY) as f32 / DAY as f32;
+    let t = (g.frame() % day) as f32 / day as f32;
     let dark = ((t * std::f32::consts::TAU).cos() * 0.5 + 0.5).powf(1.6);
     let a = (dark * 150.0) as u32;
     if a > 2 {
@@ -36,13 +36,20 @@ extern "C" fn post(api: *const Api) {
         // weit über den Rand hinaus: Breitbild und „Fenster füllen“ zeigen mehr als das Spielbild (wird beschnitten)
         g.rect(-2048, -64, 4352, 352, r << 24 | 0x10 << 16 | 0x40 << 8 | a);
     }
+    if !g.setting_bool("clock", true) {
+        return;
+    }
     let hours = (t * 24.0) as u32;
     let mins = ((t * 24.0).fract() * 60.0) as u32;
     let (sw, _) = g.screen();
-    // The Minish Cap: unter den Knöpfen oben rechts
-    let y = if g.is_minish() { 40 } else { 2 };
-    g.rect(sw - 42, y, 40, 10, 0x00000090);
-    g.text(sw - 39, y + 1, &format!("{hours:02}:{mins:02}"), if dark > 0.5 { 0xA0C0FFFF } else { 0xFFE080FF });
+    // Uhr: vom Spieler gezogen, sonst oben rechts (The Minish Cap: unter den Knöpfen)
+    let (x, y) = g.setting_pos("clock_pos").unwrap_or((sw - 42, if g.is_minish() { 40 } else { 2 }));
+    g.rect(x, y, 40, 10, 0x00000090);
+    g.text(x + 3, y + 1, &format!("{hours:02}:{mins:02}"), if dark > 0.5 { 0xA0C0FFFF } else { 0xFFE080FF });
 }
 
-crate::export_mod!(c"Tag & Nacht", c"Auf der Oberwelt wird es alle 6 Minuten Abend und Nacht, dann wieder Tag.", pre: None, post: Some(post), games: api::GAMES_ALTTP | api::GAMES_MINISH, icon: Some(include_bytes!("../icon.png")));
+crate::export_mod!(c"Tag & Nacht", c"Auf der Oberwelt wird es Abend und Nacht, dann wieder Tag (Tageslänge einstellbar).", pre: None, post: Some(post), games: api::GAMES_ALTTP | api::GAMES_MINISH, icon: Some(include_bytes!("../icon.png")), settings: &[
+    crate::setting!(c"minutes", c"Länge eines Tages (Minuten)|Length of a day (minutes)", setting::INT, 6, 1, 60),
+    crate::setting!(c"clock", c"Uhr zeigen|Show clock", setting::BOOL, 1, 0, 1),
+    crate::setting!(c"clock_pos", c"Position der Uhr|Clock position", setting::POS, setting::UNSET, 0, 0),
+]);

@@ -108,6 +108,8 @@ pub struct Settings {
     pub recompiled: bool,
     /// eingeschaltete Mods (Kennungen)
     pub mods_on: Vec<String>,
+    /// Einstellungen der Mods (Kennung -> Schlüssel -> Wert)
+    pub mod_values: std::collections::HashMap<String, std::collections::HashMap<String, i32>>,
     /// Bildrate: 0 = Monitor (VSync), sonst feste Rate ohne VSync (z. B. 200)
     pub fps_limit: u32,
     /// Breitbild: 0 = 4:3, 1 = 16:9, 2 = 21:9 (Ultrawide), 3 = Fenster füllen
@@ -253,6 +255,7 @@ impl Default for Settings {
             hi_fps: true,
             recompiled: false,
             mods_on: Vec::new(),
+            mod_values: Default::default(),
             fps_limit: 0,
             widescreen: 3,
             map_layers: [true, true, true, true, true],

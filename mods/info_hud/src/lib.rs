@@ -26,8 +26,9 @@ extern "C" fn post(api: *const Api) {
         let y = g.read16(minish::INFO_LINK_Y) as i16;
         let place = if g.read8(minish::INFO_OVERWORLD) != 0 { "Oberwelt" } else { "innen" };
         let txt = format!("X {x:5} Y {y:5}  Gebiet {area:02X} Raum {room:02X} {place}  besiegt {}", g.read32(minish::ENEMIES_KILLED));
-        g.rect(0, sh - 10, sw, 10, 0x000000A0);
-        g.text(3, sh - 9, &txt, 0xE0E0E0FF);
+        let y = if g.setting_bool("top", false) { 0 } else { sh - 10 };
+        g.rect(0, y, sw, 10, 0x000000A0);
+        g.text(3, y + 1, &txt, 0xE0E0E0FF);
         return;
     }
     let mut st = ST.lock().unwrap();
@@ -42,8 +43,11 @@ extern "C" fn post(api: *const Api) {
     let place = if indoors { format!("Raum {:03X}", g.read16(0x7E00A0)) } else { format!("Gebiet {:02X}", g.read8(0x7E008A)) };
     let enemies = (0..16u32).filter(|&i| g.read8(0x7E0DD0 + i) == 0x09 && !matches!(g.read8(0x7E0E50 + i), 0 | 0xFF)).count();
     let txt = format!("X {:4} Y {:4}  {place}  Gegner {enemies}  Lag {}", g.read16(0x7E0022), g.read16(0x7E0020), st.1);
-    g.rect(0, 214, 256, 10, 0x000000A0);
-    g.text(3, 215, &txt, 0xE0E0E0FF);
+    let y = if g.setting_bool("top", false) { 0 } else { 214 };
+    g.rect(0, y, 256, 10, 0x000000A0);
+    g.text(3, y + 1, &txt, 0xE0E0E0FF);
 }
 
-crate::export_mod!(c"Info-Anzeige", c"Position, Gebiet/Raum (A Link to the Past: Gegner und Lag-Bilder, The Minish Cap: besiegte Gegner) unten am Rand.", pre: None, post: Some(post), games: api::GAMES_ALTTP | api::GAMES_MINISH, icon: Some(include_bytes!("../icon.png")));
+crate::export_mod!(c"Info-Anzeige", c"Position, Gebiet/Raum (A Link to the Past: Gegner und Lag-Bilder, The Minish Cap: besiegte Gegner) unten am Rand.", pre: None, post: Some(post), games: api::GAMES_ALTTP | api::GAMES_MINISH, icon: Some(include_bytes!("../icon.png")), settings: &[
+    crate::setting!(c"top", c"Oben statt unten|At the top instead of the bottom", setting::BOOL, 0, 0, 1),
+]);

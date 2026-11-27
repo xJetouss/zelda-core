@@ -1609,6 +1609,12 @@ impl Root {
             let body = self.mods_ui(cx);
             v.push(self.game_window("mods", t("Mod-Liste", "Mod list"), 600.0, 680.0, body, cx, |r| r.app.win_mods = false));
         }
+        if let Some(id) = self.app.win_mod_settings.clone() {
+            let name = self.app.mods.entries(en).into_iter().find(|e| e.0 == id).map(|e| e.1).unwrap_or_default();
+            let body = self.mod_settings_ui(&id, cx);
+            let title = format!("{}: {name}", t("Einstellungen", "Settings"));
+            v.push(self.game_window("modsettings", &title, 460.0, 420.0, body, cx, |r| r.app.win_mod_settings = None));
+        }
         if self.app.win_controls {
             let body = self.controls_ui(cx);
             v.push(self.game_window("controls", t("Tastenbelegung", "Controls"), 560.0, 640.0, body, cx, |r| r.app.win_controls = false));
@@ -1797,6 +1803,10 @@ impl Root {
         if shop.take_icons_changed() {
             MOD_ICONS.with(|c| c.borrow_mut().clear());
         }
+        // gerade geholt/aktualisiert: sofort laden (auch ohne laufendes Spiel)
+        if shop.take_new() {
+            self.app.mods.load_dlls();
+        }
         let installed = self.app.mods.entries(en);
         let on_ids = self.app.s.mods_on.clone();
         let mods_ref = &self.app.mods;
@@ -1806,13 +1816,14 @@ impl Root {
             let key = if file.is_some() { key } else { id.clone() };
             let is_inst = installed.iter().any(|e| e.0 == key);
             let on = on_ids.contains(&key);
-            // Spiele und Bild: aus der geladenen Mod, sonst aus der Mod-Liste
+            // Spiele: aus der Mod-Liste (neueste Version), sonst aus der geladenen Mod; Bild: aus der Mod, sonst Liste
             let meta = mods_ref.meta(&key);
-            let (alttp, minish) = match (&meta, &file) {
-                (Some((g, _)), _) => (g & 1 != 0, g & 2 != 0),
-                (None, Some(it)) => it.for_games(),
+            let (alttp, minish) = match (&file, &meta) {
+                (Some(it), _) => it.for_games(),
+                (None, Some((g, _))) => (g & 1 != 0, g & 2 != 0),
                 _ => (true, false),
             };
+            let has_settings = is_inst && !mods_ref.settings_of(&key).is_empty();
             let icon = match meta.as_ref().and_then(|m| m.1.clone()) {
                 Some(ic) => mod_icon_from(&key, &ic),
                 None => file.as_ref().and_then(|it| it.icon_path()).and_then(|p| mod_icon_file(&p)),
@@ -1822,7 +1833,8 @@ impl Root {
                 (false, true) => "The Minish Cap",
                 _ => "A Link to the Past",
             };
-            let text = div().flex().flex_col().gap(px(2.0)).child(strong(name)).child(div().text_size(px(11.0)).text_color(col::faint()).child(games)).child(small(desc));
+            // Text darf schrumpfen und umbrechen (sonst läuft er unter die Knöpfe)
+            let text = div().flex().flex_col().flex_1().min_w(px(0.0)).gap(px(2.0)).child(strong(name)).child(div().text_size(px(11.0)).text_color(col::faint()).child(games)).child(small(desc));
             let pic = match icon {
                 Some(img) => gpui::img(gpui::ImageSource::Render(img)).w(px(32.0)).h(px(32.0)).flex_none().into_any_element(),
                 None => div().w(px(32.0)).h(px(32.0)).flex_none().rounded(px(6.0)).bg(col::faint()).opacity(0.25).into_any_element(),
@@ -1836,22 +1848,43 @@ impl Root {
                     r.app.s.mods_on.push(k2.clone());
                 }
             });
-            let mut r = row().gap(px(10.0)).child(div().flex_1().min_w(px(0.0)).child(sw));
+            let mut r = row().gap(px(6.0)).items_center().child(div().flex_1().min_w(px(0.0)).child(sw));
+            let dll_file = key.strip_prefix("dll:").unwrap_or("").to_string();
+            // Knöpfe als Symbole: Holen/Update (Pfeil), Einstellungen (Zahnrad), Deinstallieren (Papierkorb)
             if let (Some(h), Some(it)) = (have, file) {
-                let (txt, active) = match h {
-                    Have::No => (t("Holen", "Get"), true),
-                    Have::Update => (t("Update", "Update"), true),
-                    Have::Busy => (t("lädt …", "loading …"), false),
-                    Have::Restart => (t("nach Neustart", "after restart"), false),
-                    Have::Installed => ("", false),
-                };
-                if !txt.is_empty() {
-                    r = r.child(button(format!("modget-{id}"), txt, active, cx, move |r| {
-                        let loaded = r.app.mods.is_loaded(&it.file);
-                        r.app.mods.shop.install(&it, loaded);
-                    }));
+                match h {
+                    Have::No | Have::Update => {
+                        let upd = h == Have::Update;
+                        r = r.child(icon_button(format!("modget-{id}"), if upd { "update" } else { "get" }, true, cx, move |r| {
+                            let loaded = r.app.mods.is_loaded(&it.file);
+                            r.app.mods.shop.install(&it, loaded);
+                        }));
+                    }
+                    Have::Busy | Have::Restart => r = r.child(small("…")),
+                    Have::Installed => {}
                 }
             }
+            if has_settings {
+                let k3 = key.clone();
+                r = r.child(icon_button(format!("modset-{id}"), "gear", true, cx, move |r| r.app.win_mod_settings = Some(k3.clone())));
+            }
+            if is_inst && !dll_file.is_empty() {
+                let (f2, k4) = (dll_file.clone(), key.clone());
+                r = r.child(icon_button(format!("moddel-{id}"), "trash", true, cx, move |r| {
+                    r.app.s.mods_on.retain(|x| *x != k4);
+                    if let Err(e) = r.app.mods.uninstall(&f2) {
+                        r.app.msg(format!("{f2}: {e}"));
+                    }
+                }));
+            }
+            // Rechtsklick auf die Zeile: Einstellungen
+            let r = r.id(eid(format!("modrow-{id}")));
+            let r = if has_settings {
+                let k6 = key.clone();
+                r.on_mouse_down(MouseButton::Right, self::on::<MouseDownEvent>(cx, move |r| r.app.win_mod_settings = Some(k6.clone())))
+            } else {
+                r
+            };
             r.into_any_element()
         };
         let mut rows = Vec::new();
@@ -1906,8 +1939,106 @@ impl Root {
             }));
         }
         bar = bar.child(button("mods-refresh", t("Liste aktualisieren", "Refresh list"), shop.status() != Status::Loading, cx, |r| r.app.mods.shop.refresh()));
+        // alle Mods mit einem Klick deinstallieren
+        let inst: Vec<String> = installed.iter().filter_map(|e| e.0.strip_prefix("dll:").map(|f| f.to_string())).collect();
+        if !inst.is_empty() {
+            bar = bar.child(button("mods-uninstall-all", format!("{} ({})", t("Alle deinstallieren", "Uninstall all"), inst.len()), true, cx, move |r| {
+                for f in &inst {
+                    r.app.s.mods_on.retain(|x| *x != format!("dll:{f}"));
+                    if let Err(e) = r.app.mods.uninstall(f) {
+                        r.app.msg(format!("{f}: {e}"));
+                    }
+                }
+            }));
+        }
         bar = bar.child(button("mods-reload", t("Mods neu laden", "Reload mods"), true, cx, |r| r.app.mods.load_dlls()));
         v.push(bar.into_any_element());
+        v
+    }
+
+    /// Fenster „Einstellungen“ einer Mod: Schalter, Zahlen (−/+), Positionen (auf dem Spielbild ziehen)
+    fn mod_settings_ui(&mut self, id: &str, cx: &mut Context<Root>) -> Vec<AnyElement> {
+        use crate::mods::api::setting;
+        let en = self.app.s.ui_en;
+        let t = move |d: &'static str, e: &'static str| tr(en, d, e);
+        let defs = self.app.mods.settings_of(id);
+        let vals = self.app.s.mod_values.get(id).cloned().unwrap_or_default();
+        let mut rows = Vec::new();
+        // Wert setzen bzw. entfernen (None = Standard der Mod) und an die Mods geben
+        fn set(r: &mut Root, id: &str, key: &str, v: Option<i32>) {
+            let m = r.app.s.mod_values.entry(id.to_string()).or_default();
+            match v {
+                Some(v) => {
+                    m.insert(key.to_string(), v);
+                }
+                None => {
+                    m.remove(key);
+                }
+            }
+            r.app.mods.set_values(&r.app.s.mod_values);
+        }
+        for d in defs {
+            let label = if en { d.label_en.clone() } else { d.label_de.clone() };
+            let cur = vals.get(&d.key).copied();
+            let (idk, kk) = (id.to_string(), d.key.clone());
+            match d.kind {
+                setting::BOOL => {
+                    let on = cur.unwrap_or(d.def) != 0;
+                    rows.push(switch(format!("ms-{}", d.key), label, on, true, cx, move |r| set(r, &idk, &kk, Some((!on) as i32))).into_any_element());
+                }
+                setting::INT => {
+                    let v = cur.unwrap_or(d.def).clamp(d.min, d.max);
+                    let step = ((d.max - d.min) / 20).max(1);
+                    let (min, max) = (d.min, d.max);
+                    let (i2, k2) = (idk.clone(), kk.clone());
+                    rows.push(
+                        row()
+                            .gap(px(8.0))
+                            .items_center()
+                            .px(px(6.0))
+                            .child(div().flex_1().min_w(px(0.0)).child(label))
+                            .child(button(format!("ms-{}-m", d.key), "−", v > min, cx, move |r| set(r, &idk, &kk, Some((v - step).max(min)))))
+                            .child(div().w(px(56.0)).flex().justify_center().font_family(MONO_FONT).child(v.to_string()))
+                            .child(button(format!("ms-{}-p", d.key), "+", v < max, cx, move |r| set(r, &i2, &k2, Some((v + step).min(max)))))
+                            .into_any_element(),
+                    );
+                }
+                _ => {
+                    let txt = match cur {
+                        Some(v) => format!("{}, {}", v as u32 as u16 as i16, (v as u32 >> 16) as u16 as i16),
+                        None => t("Standard", "Default").to_string(),
+                    };
+                    let (i2, k2) = (idk.clone(), kk.clone());
+                    rows.push(
+                        row()
+                            .gap(px(8.0))
+                            .items_center()
+                            .px(px(6.0))
+                            .child(div().flex_1().min_w(px(0.0)).child(label))
+                            .child(div().font_family(MONO_FONT).text_color(col::dim()).child(txt))
+                            .child(button(format!("ms-{}-drag", d.key), t("Auf dem Bild ziehen", "Drag on screen"), true, cx, move |r| {
+                                r.app.mod_place = Some((idk.clone(), kk.clone()));
+                                r.app.win_mods = false;
+                                r.app.win_mod_settings = None;
+                            }))
+                            .child(button(format!("ms-{}-def", d.key), t("Standard", "Default"), cur.is_some(), cx, move |r| set(r, &i2, &k2, None)))
+                            .into_any_element(),
+                    );
+                }
+            }
+        }
+        let mut v = vec![section(t("Einstellungen", "Settings"), rows).into_any_element()];
+        let idr = id.to_string();
+        v.push(
+            row()
+                .pt(px(10.0))
+                .gap(px(8.0))
+                .child(button("ms-reset", t("Alles zurücksetzen", "Reset all"), !vals.is_empty(), cx, move |r| {
+                    r.app.s.mod_values.remove(&idr);
+                    r.app.mods.set_values(&r.app.s.mod_values);
+                }))
+                .into_any_element(),
+        );
         v
     }
 
@@ -2393,5 +2524,80 @@ fn mod_icon_file(p: &std::path::Path) -> Option<std::sync::Arc<gpui::RenderImage
             MOD_ICONS.with(|c| c.borrow_mut().insert(key, None));
             None
         }
+    }
+}
+
+
+/// Kleine Pixel-Symbole für Knöpfe (12×12, doppelt so groß gezeichnet)
+fn ui_icon(kind: &str) -> Option<std::sync::Arc<gpui::RenderImage>> {
+    const GET: [&str; 12] = [
+        ".....##.....", ".....##.....", ".....##.....", ".....##.....", "..#..##..#..", "...#.##.#...",
+        "....####....", ".....##.....", "............", "#..........#", "#..........#", "############",
+    ];
+    const UPDATE: [&str; 12] = [
+        "....####....", "..##....##..", ".#........#.", ".#..........", "#...........", "#......#####",
+        "#........##.", "#.......#.#.", ".#.....#..#.", ".#....#...#.", "..##........", "....####....",
+    ];
+    const GEAR: [&str; 12] = [
+        ".....##.....", "..#.####.#..", ".##########.", "..###..###..", ".###....###.", "####....####",
+        "####....####", ".###....###.", "..###..###..", ".##########.", "..#.####.#..", ".....##.....",
+    ];
+    const TRASH: [&str; 12] = [
+        "....####....", "############", "............", ".##########.", ".#.#.##.#.#.", ".#.#.##.#.#.",
+        ".#.#.##.#.#.", ".#.#.##.#.#.", ".#.#.##.#.#.", ".#.#.##.#.#.", ".##########.", "............",
+    ];
+    let (pat, c): (&[&str; 12], [u8; 3]) = match kind {
+        "get" => (&GET, [120, 216, 120]),
+        "update" => (&UPDATE, [248, 208, 64]),
+        "gear" => (&GEAR, [208, 212, 218]),
+        _ => (&TRASH, [224, 108, 108]),
+    };
+    MOD_ICONS.with(|cache| {
+        cache
+            .borrow_mut()
+            .entry(format!("ui:{kind}"))
+            .or_insert_with(|| {
+                let k = 2;
+                let n = 12 * k;
+                let mut bgra = vec![0u8; n * n * 4];
+                for (y, row) in pat.iter().enumerate() {
+                    for (x, ch) in row.bytes().enumerate() {
+                        if ch != b'#' {
+                            continue;
+                        }
+                        for dy in 0..k {
+                            for dx in 0..k {
+                                let o = ((y * k + dy) * n + x * k + dx) * 4;
+                                bgra[o..o + 4].copy_from_slice(&[c[2], c[1], c[0], 255]);
+                            }
+                        }
+                    }
+                }
+                gfx::render_image(n as u32, n as u32, bgra).map(std::sync::Arc::new)
+            })
+            .clone()
+    })
+}
+
+/// Knopf mit Pixel-Symbol (Holen, Update, Einstellungen, Deinstallieren)
+fn icon_button(id: impl Into<SharedString>, kind: &str, enabled: bool, cx: &mut Context<Root>, f: impl Fn(&mut Root) + 'static) -> Stateful<Div> {
+    let mut b = div()
+        .id(eid(id))
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(30.0))
+        .rounded(px(6.0))
+        .border_1()
+        .border_color(col::panel_line())
+        .bg(rgb(0x22262d));
+    if let Some(img) = ui_icon(kind) {
+        b = b.child(gpui::img(gpui::ImageSource::Render(img)).size(px(18.0)));
+    }
+    if enabled {
+        b.cursor_pointer().hover(|s| s.bg(col::hover()).border_color(rgb(0x3c424b))).active(|s| s.bg(col::press())).on_click(on::<ClickEvent>(cx, f))
+    } else {
+        b.opacity(0.4)
     }
 }

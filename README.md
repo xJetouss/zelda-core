@@ -1,4 +1,4 @@
-# Zelda Core 0.54 – A Link to the Past & The Minish Cap
+# Zelda Core 0.55 – A Link to the Past & The Minish Cap
 
 Eigener SNES-Emulator in Rust, zugeschnitten auf *The Legend of Zelda: A Link to the Past*.
 **Keine ROM enthalten** – du brauchst eine Kopie deines eigenen Moduls (`.sfc`/`.smc`).
@@ -250,6 +250,9 @@ In der App steckt keine Mod. Menü *Mods* → „Mod-Liste…“ öffnet ein eig
 GitHub-Release „mods“ dieses Repositorys): „Holen“ bzw. „Alle holen“ installiert sie in den Ordner `mods` neben der .exe,
 der Schalter daneben schaltet sie an und aus. Neue Versionen erscheinen dort als „Update“. Jede Mod hat ein eigenes Bild
 und zeigt, in welchen Spielen sie läuft (A Link to the Past, The Minish Cap oder beide).
+Updates gelten sofort (ohne Neustart). Der Papierkorb deinstalliert eine Mod, „Alle deinstallieren“ alle auf einmal.
+Mods mit Einstellungen haben ein Zahnrad (auch Rechtsklick auf die Zeile): Schalter, Zahlen und Positionen, die man
+mit der Maus direkt auf dem Spielbild an ihren Platz zieht (z. B. den Speedrun-Timer).
 
 In der Mod-Liste (Quelltext in `mods/`, jede Mod eine eigene DLL):
 
@@ -268,8 +271,10 @@ In der Mod-Liste (Quelltext in `mods/`, jede Mod eine eigene DLL):
 | Königskrone | Bild aus einer PNG-Datei folgt Link (Bild-Schnittstelle) | beide |
 | Münz-Klang | eigener Ton bei jeder Rubine (Ton-Schnittstelle) | beide |
 
-**Eigene Mods** sind Rust-DLLs (Schnittstelle `assets/mod_template/src/api.rs`, Version 4; Mods der Version 3 laufen
-weiter in A Link to the Past). Ab Version 4 sagt eine Mod mit `pastlink_mod_games`, ob sie auch in The Minish Cap läuft
+**Eigene Mods** sind Rust-DLLs (Schnittstelle `assets/mod_template/src/api.rs`, Version 6; ältere Mods ab Version 3 laufen
+weiter). Ab Version 5 bietet eine Mod mit `pastlink_mod_settings` eigene Einstellungen an, ab Version 6 nutzt sie
+Funktionen des Launchers (`app_get`/`app_set`/`app_do`: Spielzeit, Lautstärke, Tempo, Breitbild, Pause, Spielstände
+speichern/laden, Screenshot, Karte …). Ab Version 4 sagt eine Mod mit `pastlink_mod_games`, ob sie auch in The Minish Cap läuft
 (dort GBA-Adressen, Zeichnen in GBA-Pixeln, Zusatz-Infos wie Links Position unter `api::minish`), und zeigt mit
 `pastlink_mod_icon` ein eigenes Bild in der Mod-Liste. „Mod-Vorlage
 exportieren…“ legt ein Beispielprojekt mit Doku an. Eine Mod darf im RC-Modus:

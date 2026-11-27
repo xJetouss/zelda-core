@@ -20,7 +20,7 @@ und dürfen dort fast alles:
 
 ## Aufbau
 
-- `src/api.rs`: die Schnittstelle (nicht ändern; dieselbe Datei steckt in Zelda Core, Version 4).
+- `src/api.rs`: die Schnittstelle (nicht ändern; dieselbe Datei steckt in Zelda Core, Version 6).
 - `src/lib.rs`: deine Mod. Sie exportiert `pastlink_mod()` und liefert eine `ModInfo` mit Name,
   Beschreibung, `pre_frame` / `post_frame` und optional Hook-Adressen + `on_hook`.
 
@@ -132,3 +132,38 @@ Routinen und Sprungzielen (JSR/JSL), also da, wo eine Routine betreten wird.
 - Was eine Mod im RAM ändert, landet im Spielstand. Zustand in der Mod selbst (Variablen) nicht.
 - Paletten/VRAM lädt das Spiel oft selbst neu. Wer sie dauerhaft ändern will, schreibt sie jedes Bild
   in `post_frame` (oder ändert die Quelle im WRAM/ROM).
+
+### Ab Version 5: Einstellungen (Zahnrad in der Mod-Liste)
+
+Eine Mod kann Einstellungen anbieten. Der Spieler öffnet sie über das Zahnrad (oder Rechtsklick) in der Mod-Liste:
+Schalter, Zahlen und **Positionen**, die er mit der Maus direkt auf dem Spielbild an ihren Platz zieht.
+
+```rust
+static SETTINGS: [api::Setting; 2] = [
+    api::Setting { key: c"pos".as_ptr(), label: c"Position|Position".as_ptr(), kind: api::setting::POS, def: api::setting::UNSET, min: 0, max: 0 },
+    api::Setting { key: c"sek".as_ptr(), label: c"Sekunden|Seconds".as_ptr(), kind: api::setting::INT, def: 8, min: 1, max: 60 },
+];
+#[no_mangle]
+pub extern "C" fn pastlink_mod_settings(n: *mut u32) -> *const api::Setting {
+    unsafe { *n = SETTINGS.len() as u32 };
+    SETTINGS.as_ptr()
+}
+```
+
+| Funktion | Bedeutung |
+|---|---|
+| `setting_bool(key, standard)` | Schalter |
+| `setting_int(key, standard)` | Zahl (`min`..`max`) |
+| `setting_pos(key)` → `Option<(x, y)>` | Position in Spielpixeln; `None`, solange der Spieler keine gezogen hat |
+
+### Ab Version 6: Launcher-Funktionen
+
+Eine Mod kann Werte der App lesen und ändern und Aktionen auslösen (gilt nach dem laufenden Bild):
+
+| Funktion | Bedeutung |
+|---|---|
+| `app_get(app::PLAY_FRAMES)` | Spielzeit des Spielstands in Bildern (mit `app::FPS_X100` in Sekunden umrechnen) |
+| `app_get(app::DEATHS)` / `app::SESSION_FRAMES` | Tode im Spielstand / Bilder seit dem Start der App |
+| `app_get/app_set(app::VOLUME, 0..100)` | Lautstärke; ebenso `MUTE`, `SPEED` (Prozent), `WIDESCREEN` (0–3), `PAUSED`, `TURBO` |
+| `app_do(app::SAVE_STATE, platz)` / `app_do(app::LOAD_STATE, platz)` | Spielstand speichern / laden |
+| `app_do(app::SCREENSHOT, 0)` / `app::MAP` / `app::STATES_MENU` / `app::RESET_DEATHS` | Bildschirmfoto, Karte, Spielstand-Menü, Tode auf 0 |

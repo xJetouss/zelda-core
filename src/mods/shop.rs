@@ -109,6 +109,16 @@ fn versions() -> HashMap<String, String> {
     std::fs::read(dir().join("shop.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
+/// Mod wurde deinstalliert: Version vergessen
+fn forget_version(file: &str) {
+    let mut m = versions();
+    if m.remove(file).is_some() {
+        if let Ok(s) = serde_json::to_vec_pretty(&m) {
+            let _ = std::fs::write(dir().join("shop.json"), s);
+        }
+    }
+}
+
 fn save_version(file: &str, v: &str) {
     let mut m = versions();
     m.insert(file.to_string(), v.to_string());
@@ -144,6 +154,16 @@ impl Shop {
     pub fn error_of(&self, id: &str) -> Option<String> {
         self.st.lock().unwrap().failed.get(id).cloned()
     }
+    /// deinstalliert: Version vergessen, Fehler löschen
+    pub fn forget(&self, file: &str) {
+        forget_version(file);
+        let mut s = self.st.lock().unwrap();
+        let ids: Vec<String> = s.items.iter().filter(|i| i.file == file).map(|i| i.id.clone()).collect();
+        for id in ids {
+            s.failed.remove(&id);
+        }
+    }
+
     /// neue Bilder seit dem letzten Aufruf?
     pub fn take_icons_changed(&self) -> bool {
         std::mem::take(&mut self.st.lock().unwrap().icons_changed)

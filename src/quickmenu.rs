@@ -344,6 +344,7 @@ pub fn equip(s: &mut Snes, e: Entry) -> bool {
     if !can_use(s) {
         return false;
     }
+    let before = (s.bus.wram[0x0202], s.bus.wram[0xF34F]);
     s.bus.wram[0x0202] = e.idx;
     if let Some(b) = e.bottle {
         s.bus.wram[0xF34F] = b;
@@ -401,7 +402,14 @@ pub fn equip(s: &mut Snes, e: Entry) -> bool {
         }
     }
     s.bus.joy[0] = saved;
-    ok && r8(s, 0x7E0202) == e.idx
+    let ok = ok && r8(s, 0x7E0202) == e.idx;
+    // nicht geklappt (Menü ging nicht auf): altes Item zurück – sonst zeigt die Anzeige ein anderes Item als das,
+    // das auf Y liegt
+    if !ok && r8(s, 0x7E0010) == start && r8(s, 0x7E0011) == 0 {
+        s.bus.wram[0x0202] = before.0;
+        s.bus.wram[0xF34F] = before.1;
+    }
+    ok
 }
 
 /// Zustand des Schnellmenüs in der App.
@@ -535,10 +543,18 @@ mod tests {
         }
         println!("can_use {} modus {:02X}", can_use(&s), r8(&s, 0x7E0010));
         let list = entries(&s);
+        let hud = |s: &Snes| s.bus.wram[0xC700..0xC800].to_vec();
+        let mut same = 0;
         for held in [0u16, 0x0200, 0x0100] {
             for e in &list {
                 s.bus.joy[0] = held;
+                let before = hud(&s);
+                let was = current(&s);
                 let ok = equip(&mut s, *e);
+                if was.idx != e.idx && hud(&s) == before {
+                    same += 1;
+                    println!("  Anzeige unverändert bei Item {}", e.idx);
+                }
                 for _ in 0..5 {
                     s.bus.joy[0] = held;
                     s.run_frame();
@@ -547,6 +563,7 @@ mod tests {
                 println!("gehalten {held:04X} Item {:2} ok {ok} -> Modus {:02X}/{:02X} Y={}", e.idx, r8(&s, 0x7E0010), r8(&s, 0x7E0011), r8(&s, 0x7E0202));
             }
         }
+        println!("Anzeige unverändert: {same}");
     }
 
     #[test]

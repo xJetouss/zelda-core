@@ -1,4 +1,4 @@
-//! Zelda Core Mod-Schnittstelle (C-ABI, Version 4). Mods laufen in A Link to the Past im Recompiled-Modus (RC)
+//! Zelda Core Mod-Schnittstelle (C-ABI, Version 6). Mods laufen in A Link to the Past im Recompiled-Modus (RC)
 //! und – ab Version 4 – in The Minish Cap (PC-Fassung, `tmc_core.dll`).
 //!
 //! Diese Datei ist in der App und in jeder Mod dieselbe. Nicht ändern: Die App prüft `PASTLINK_MOD_ABI`.
@@ -25,13 +25,22 @@
 //!
 //! **Icon (ab Version 4):** Mit dem Export `pastlink_mod_icon(len: *mut u32) -> *const u8` (PNG-Daten, am
 //! besten 32×32) zeigt die Mod-Liste ein eigenes Bild.
+//!
+//! **Einstellungen (ab Version 5):** Mit dem Export `pastlink_mod_settings(n: *mut u32) -> *const Setting` zeigt
+//! die Mod-Liste bei der Mod ein Zahnrad. Dort stellt der Spieler Schalter, Zahlen und Positionen ein (eine
+//! Position zieht er mit der Maus direkt auf dem Spielbild an ihren Platz). Die Mod liest die Werte mit
+//! `Game::setting` / `Game::setting_pos`; die App speichert sie.
+//!
+//! **Launcher (ab Version 6):** Eine Mod liest und ändert Werte der App (`app_get` / `app_set`, Schlüssel in
+//! `app::…`, z. B. Spielzeit des Spielstands, Lautstärke, Tempo, Breitbild, Pause) und löst Aktionen aus
+//! (`app_do`: Spielstand speichern/laden, Screenshot, Karte …). Änderungen gelten nach dem laufenden Bild.
 
 #![allow(dead_code)]
 
 use std::ffi::{c_char, c_void};
 
 /// Versionsnummer der Schnittstelle
-pub const PASTLINK_MOD_ABI: u32 = 4;
+pub const PASTLINK_MOD_ABI: u32 = 6;
 
 /// `Api::game`: A Link to the Past
 pub const GAME_ALTTP: u32 = 0;
@@ -56,6 +65,83 @@ pub mod space {
     /// ROM-Abbild im Speicher (Dateioffset ohne Header)
     pub const ROM: u32 = 4;
 }
+
+/// Werte und Aktionen der App (Launcher) für `app_get` / `app_set` / `app_do`
+pub mod app {
+    /// unbekannter Schlüssel bzw. ältere App
+    pub const NONE: i64 = i64::MIN;
+    // ---- lesen
+    /// Spielzeit des laufenden Spielstands in Bildern (wie in der Spielstand-Liste; zählt nur, solange gespielt wird)
+    pub const PLAY_FRAMES: &str = "play_frames";
+    /// Bilder pro Sekunde des Spiels × 100 (A Link to the Past ≈ 6010, The Minish Cap ≈ 5973)
+    pub const FPS_X100: &str = "fps_x100";
+    /// Tode im laufenden Spielstand
+    pub const DEATHS: &str = "deaths";
+    /// Bilder seit dem Start der App (Sitzung)
+    pub const SESSION_FRAMES: &str = "session_frames";
+    // ---- lesen und ändern
+    /// Lautstärke 0..100
+    pub const VOLUME: &str = "volume";
+    /// Ton aus (0/1)
+    pub const MUTE: &str = "mute";
+    /// Spieltempo in Prozent (100 = normal)
+    pub const SPEED: &str = "speed";
+    /// Breitbild: 0 aus, 1 16:9, 2 21:9, 3 Fenster füllen
+    pub const WIDESCREEN: &str = "widescreen";
+    /// Pause (0/1)
+    pub const PAUSED: &str = "paused";
+    /// Tempo beim Vorspulen (Turbo) als Faktor
+    pub const TURBO: &str = "turbo_speed";
+    // ---- Aktionen (`app_do`)
+    /// Spielstand speichern (Wert = Platz 1..10)
+    pub const SAVE_STATE: &str = "save_state";
+    /// Spielstand laden (Wert = Platz 1..10)
+    pub const LOAD_STATE: &str = "load_state";
+    /// Bildschirmfoto
+    pub const SCREENSHOT: &str = "screenshot";
+    /// Karte öffnen/schließen
+    pub const MAP: &str = "map";
+    /// Spielstand-Menü öffnen/schließen
+    pub const STATES_MENU: &str = "states_menu";
+    /// Tode des Spielstands auf 0
+    pub const RESET_DEATHS: &str = "reset_deaths";
+}
+
+/// Arten von Einstellungen (`Setting::kind`)
+pub mod setting {
+    /// Schalter (0/1)
+    pub const BOOL: u32 = 0;
+    /// Zahl von `min` bis `max`
+    pub const INT: u32 = 1;
+    /// Position auf dem Spielbild (zum Ziehen); Wert: x in den unteren, y in den oberen 16 Bit (je mit Vorzeichen).
+    /// `def` = `UNSET`: die Mod nimmt ihren eigenen Platz, bis der Spieler einen wählt
+    pub const POS: u32 = 2;
+    /// noch nicht gesetzt (Position) bzw. unbekannter Schlüssel
+    pub const UNSET: i32 = i32::MIN;
+
+    /// Position in einen Wert packen
+    pub const fn pos(x: i32, y: i32) -> i32 {
+        ((x as i16 as u16 as u32) | ((y as i16 as u16 as u32) << 16)) as i32
+    }
+}
+
+/// Eine Einstellung der Mod (statisch, lebt so lange wie die DLL)
+#[repr(C)]
+pub struct Setting {
+    /// Schlüssel (ASCII, mit 0 abgeschlossen), z. B. `c"pos"`
+    pub key: *const c_char,
+    /// Beschriftung, Deutsch und Englisch mit `|` getrennt, z. B. `c"Position|Position"`
+    pub label: *const c_char,
+    /// `setting::BOOL`, `INT` oder `POS`
+    pub kind: u32,
+    /// Standardwert
+    pub def: i32,
+    /// kleinster / größter Wert (nur `INT`)
+    pub min: i32,
+    pub max: i32,
+}
+
+unsafe impl Sync for Setting {}
 
 /// The Minish Cap: wichtige Adressen (GBA) und Zusatz-Infos der App
 pub mod minish {
@@ -187,6 +273,18 @@ pub struct Api {
     /// 240×160 bzw. breiter im Breitbild)
     pub screen_w: u32,
     pub screen_h: u32,
+
+    // ---- ab Version 5
+    /// Wert einer Einstellung (`setting::UNSET`, wenn unbekannt bzw. Position noch nicht gewählt)
+    pub setting: extern "C" fn(ctx: *mut c_void, key: *const c_char) -> i32,
+
+    // ---- ab Version 6
+    /// Wert der App lesen (`app::…`; `app::NONE`, wenn unbekannt)
+    pub app_get: extern "C" fn(ctx: *mut c_void, key: *const c_char) -> i64,
+    /// Wert der App ändern (gilt nach diesem Bild)
+    pub app_set: extern "C" fn(ctx: *mut c_void, key: *const c_char, value: i64),
+    /// Aktion der App auslösen (`app::SAVE_STATE` …; gilt nach diesem Bild)
+    pub app_do: extern "C" fn(ctx: *mut c_void, action: *const c_char, value: i64),
 }
 
 /// Beschreibung einer Mod (statisch, lebt so lange wie die DLL)
@@ -229,6 +327,57 @@ impl Game<'_> {
     /// Größe des Spielbilds in Zeichen-Pixeln
     pub fn screen(&self) -> (i32, i32) {
         if self.0.abi >= 4 { (self.0.screen_w as i32, self.0.screen_h as i32) } else { (256, 224) }
+    }
+    /// Wert einer Einstellung (`pastlink_mod_settings`); ältere App: `setting::UNSET`
+    pub fn setting(&self, key: &str) -> i32 {
+        if self.0.abi < 5 {
+            return setting::UNSET;
+        }
+        let b = cstr(key);
+        (self.0.setting)(self.0.ctx, b.as_ptr() as *const c_char)
+    }
+    /// Wert der App (Launcher) lesen, z. B. `app::PLAY_FRAMES`; ältere App: `app::NONE`
+    pub fn app_get(&self, key: &str) -> i64 {
+        if self.0.abi < 6 {
+            return app::NONE;
+        }
+        let b = cstr(key);
+        (self.0.app_get)(self.0.ctx, b.as_ptr() as *const c_char)
+    }
+    /// Wert der App ändern, z. B. `app_set(app::VOLUME, 50)`
+    pub fn app_set(&self, key: &str, value: i64) {
+        if self.0.abi >= 6 {
+            let b = cstr(key);
+            (self.0.app_set)(self.0.ctx, b.as_ptr() as *const c_char, value)
+        }
+    }
+    /// Aktion der App, z. B. `app_do(app::SAVE_STATE, 3)`
+    pub fn app_do(&self, action: &str, value: i64) {
+        if self.0.abi >= 6 {
+            let b = cstr(action);
+            (self.0.app_do)(self.0.ctx, b.as_ptr() as *const c_char, value)
+        }
+    }
+    /// Schalter-Einstellung (sonst `def`)
+    pub fn setting_bool(&self, key: &str, def: bool) -> bool {
+        match self.setting(key) {
+            setting::UNSET => def,
+            v => v != 0,
+        }
+    }
+    /// Zahl-Einstellung (sonst `def`)
+    pub fn setting_int(&self, key: &str, def: i32) -> i32 {
+        match self.setting(key) {
+            setting::UNSET => def,
+            v => v,
+        }
+    }
+    /// Position-Einstellung; `None`, solange der Spieler keine gewählt hat
+    pub fn setting_pos(&self, key: &str) -> Option<(i32, i32)> {
+        match self.setting(key) {
+            setting::UNSET => None,
+            v => Some((v as u32 as u16 as i16 as i32, (v as u32 >> 16) as u16 as i16 as i32)),
+        }
     }
     pub fn read32(&self, addr: u32) -> u32 {
         self.read16(addr) as u32 | (self.read16(addr + 2) as u32) << 16

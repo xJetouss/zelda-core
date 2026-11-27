@@ -392,6 +392,9 @@ pub struct App {
     /// Schnellmenü über Steuerkreuz → am Controller gehalten
     pub(crate) qm_pad: bool,
     ctl_dpad_prev: u16,
+    /// Entwicklung: erledigte Einträge der Tastenfolge, nächstes zu speicherndes Bild
+    dev_done: std::collections::HashSet<u32>,
+    dev_dump: Option<String>,
     pub(crate) game_fps_count: u32,
     pub(crate) game_fps: f64,
     pub(crate) room_tex: HashMap<u16, gfx::TextureHandle>,
@@ -432,6 +435,12 @@ pub struct App {
     pub(crate) win_cheats: bool,
     /// Fenster „Mod-Liste“
     pub(crate) win_mods: bool,
+    /// Einstellungen dieser Mod offen (Kennung)
+    pub(crate) win_mod_settings: Option<String>,
+    /// Position einer Mod-Einstellung auf dem Spielbild ziehen: (Mod-Kennung, Schlüssel)
+    pub(crate) mod_place: Option<(String, String)>,
+    /// Bilder der App seit dem Start (für Mods: `app::SESSION_FRAMES`)
+    mod_frames: u64,
     /// GBA-Modus (z. B. The Minish Cap, Kern mGBA)
     pub(crate) gba: crate::gba::ui::GbaView,
     pub(crate) win_controls: bool,
@@ -619,6 +628,8 @@ impl App {
             ctl_dpad: 0,
             qm_pad: false,
             ctl_dpad_prev: 0,
+            dev_done: Default::default(),
+            dev_dump: None,
             game_fps_count: 0,
             game_fps: 0.0,
             room_tex: HashMap::new(),
@@ -671,6 +682,9 @@ impl App {
             win_cheats: false,
             // Entwicklung: Fenster gleich beim Start öffnen (PASTLINK_OPEN=mods)
             win_mods: std::env::var("PASTLINK_OPEN").is_ok_and(|v| v == "mods"),
+            win_mod_settings: None,
+            mod_place: None,
+            mod_frames: 0,
             gba: Default::default(),
             win_controls: false,
             win_hotkeys: false,
@@ -744,6 +758,7 @@ impl App {
             double_on: false,
             rewind_on: false,
         };
+        app.mods.set_values(&app.s.mod_values);
         app.ensure_lut();
         if app.audio.is_none() {
             app.msg(app.t("Kein Audiogerät gefunden – Ton deaktiviert.", "No audio device found – sound disabled."));
@@ -2027,6 +2042,41 @@ impl App {
                 pad &= !0x0300;
             }
         }
+        // Entwicklung: Tastenfolge für A Link to the Past (PASTLINK_SNES_KEYS = „taste:bild,…“, gezählte Spielbilder;
+        // U/L/R = Steuerkreuz am Controller ↑/←/→, u/d/l/r = Richtungen, a/b/x/y/s = Tasten, p = Bild speichern,
+        // 1 = Spielstand 1 laden)
+        if let Ok(spec) = std::env::var("PASTLINK_SNES_KEYS") {
+            let t = self.game_fps_count as u32;
+            for e in spec.split(',') {
+                let Some((k, at)) = e.split_once(':') else { continue };
+                let Ok(at) = at.parse::<u32>() else { continue };
+                if t < at || t >= at + 4 {
+                    continue;
+                }
+                match k {
+                    "U" => ctl_dpad |= 1 << 11,
+                    "L" => ctl_dpad |= 1 << 9,
+                    "R" => ctl_dpad |= 1 << 8,
+                    "u" => pad |= 0x0800,
+                    "d" => pad |= 0x0400,
+                    "l" => pad |= 0x0200,
+                    "r" => pad |= 0x0100,
+                    "a" => pad |= 0x0080,
+                    "b" => pad |= 0x8000,
+                    "x" => pad |= 0x0040,
+                    "y" => pad |= 0x4000,
+                    "s" => pad |= 0x1000,
+                    "p" | "1" if self.dev_done.insert(at) => {
+                        if k == "1" {
+                            self.load_slot(1);
+                        } else {
+                            self.dev_dump = Some(format!("frame_{at}.bmp"));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         self.ctl_dpad = ctl_dpad;
         self.minus_now = minus;
         if l3 && !self.l3_prev && (self.game.is_some() || self.gba.active()) {
@@ -2201,9 +2251,19 @@ impl App {
             self.msg(format!("X: {name}"));
             return;
         }
-        if quickmenu::current(&g.snes) == e {
-            return;
+        // X-Item gerade in Benutzung: erst das alte Y zurück, sonst stellt das Zurücksetzen später das alte Y-Item
+        // wieder ein (Anzeige und Item passen dann nicht mehr zusammen)
+        if self.x_using {
+            let (a, b, c) = self.x_restore;
+            let w = &mut g.snes.bus.wram;
+            w[0x0202] = a;
+            w[0x0303] = b;
+            w[0xF34F] = c;
+            self.x_using = false;
+            self.x_dirty = false;
         }
+        // immer über das Spielmenü ausrüsten (auch wenn $0202 schon stimmt): nur so zeichnet das Spiel die Anzeige
+        // oben neu
         let ok = quickmenu::equip(&mut g.snes, e);
         if ok && e.idx == 20 && self.s.mirror_direct {
             self.mirror_press = 6;
@@ -3012,6 +3072,13 @@ impl App {
     fn update_texture(&mut self, ctx: &gfx::Context) {
         self.ensure_lut();
         let mut changed = false;
+        // Entwicklung: Spielbild samt X-Feld speichern (PASTLINK_SNES_KEYS „p“)
+        if let Some(f) = self.dev_dump.take() {
+            self.compose_view_hud();
+            let w = self.view_w.max(1);
+            let px: Vec<Color32> = self.view.iter().map(|&c| self.lut[c as usize & 0x7FFF]).collect();
+            crate::devtest_bmp(&f, w, px.len() / w, &px);
+        }
         // unverändertes Zwischenbild (z. B. Stillstand) nicht erneut skalieren/hochladen
         if self.compose_view_hud() && !(self.view_w == self.shown_w && self.view == self.shown) {
             self.shown.clone_from(&self.view);
@@ -3529,6 +3596,7 @@ impl App {
         for p in dropped {
             self.open_any(p);
         }
+        self.mods_sync();
         self.hotkeys(ctx);
         self.handle_rebind(ctx);
         let (mut pad, turbo, double, rewind) = self.gather_input(ctx);
@@ -3725,5 +3793,65 @@ mod input_tests {
         assert_eq!(stick_dirs(-0.7, -0.7, 0.3), (1 << 9) | (1 << 10));
         assert_eq!(stick_dirs(0.9, 0.2, 0.3), 1 << 8);
         assert_eq!(stick_dirs(0.1, 0.1, 0.3), 0);
+    }
+}
+
+impl App {
+    /// Mods und Launcher: Werte der App für die Mods bereitstellen (`app_get`) und ihre Wünsche ausführen
+    /// (`app_set` / `app_do`, gesammelt im letzten Bild)
+    pub(crate) fn mods_sync(&mut self) {
+        use crate::mods::api::app as k;
+        self.mod_frames += 1;
+        let mut v = HashMap::new();
+        let (play, fps, deaths) = if self.gba.active() {
+            (self.gba.play_frames, self.gba.game.as_ref().map_or(59.73, |g| g.fps), self.gba.deaths)
+        } else if let Some(g) = &self.game {
+            (g.play_frames, 60.0988, g.deaths)
+        } else {
+            (0, 60.0, 0)
+        };
+        v.insert(k::PLAY_FRAMES.to_string(), play as i64);
+        v.insert(k::FPS_X100.to_string(), (fps * 100.0).round() as i64);
+        v.insert(k::DEATHS.to_string(), deaths as i64);
+        v.insert(k::SESSION_FRAMES.to_string(), self.mod_frames as i64);
+        v.insert(k::VOLUME.to_string(), (self.s.volume * 100.0).round() as i64);
+        v.insert(k::MUTE.to_string(), self.s.mute as i64);
+        v.insert(k::SPEED.to_string(), (self.s.speed * 100.0).round() as i64);
+        v.insert(k::WIDESCREEN.to_string(), self.s.widescreen as i64);
+        v.insert(k::PAUSED.to_string(), self.paused as i64);
+        v.insert(k::TURBO.to_string(), self.s.turbo_speed.round() as i64);
+        self.mods.set_app_state(v);
+        for (action, key, val) in self.mods.take_app_ops() {
+            if action {
+                let slot = val.clamp(1, 10) as u8;
+                match key.as_str() {
+                    k::SAVE_STATE => self.save_slot(slot),
+                    k::LOAD_STATE => self.load_slot(slot),
+                    k::SCREENSHOT => self.screenshot(),
+                    k::MAP => {
+                        if self.gba.active() {
+                            self.gba_map_toggle();
+                        } else if self.win_map {
+                            self.win_map = false;
+                        } else if self.game.is_some() {
+                            self.open_map_overlay();
+                        }
+                    }
+                    k::STATES_MENU => self.win_states = !self.win_states,
+                    k::RESET_DEATHS => self.reset_deaths(false),
+                    _ => {}
+                }
+            } else {
+                match key.as_str() {
+                    k::VOLUME => self.s.volume = (val.clamp(0, 100) as f32) / 100.0,
+                    k::MUTE => self.s.mute = val != 0,
+                    k::SPEED => self.s.speed = (val.clamp(10, 800) as f32) / 100.0,
+                    k::WIDESCREEN => self.s.widescreen = val.clamp(0, 3) as u8,
+                    k::PAUSED => self.paused = val != 0,
+                    k::TURBO => self.s.turbo_speed = val.clamp(2, 16) as f32,
+                    _ => {}
+                }
+            }
+        }
     }
 }
