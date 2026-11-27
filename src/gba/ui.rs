@@ -1239,6 +1239,7 @@ impl App {
         let mut dpad = 0u16;
         let mut map_at = None;
         let mut cheat_at = None;
+        let mut equip_at = None;
         for e in spec.split(',') {
             let Some((k, at)) = e.split_once(':') else { continue };
             let Ok(at) = at.parse::<u32>() else { continue };
@@ -1263,12 +1264,17 @@ impl App {
                 "m" => map_at = Some(at),
                 // 100-%-Cheat – einmal je Eintrag
                 "c" => cheat_at = Some(at),
+                // Item auf B legen wie die Schnellleiste (PASTLINK_GBA_EQUIPB = Item)
+                "e" if t == at => equip_at = std::env::var("PASTLINK_GBA_EQUIPB").ok().and_then(|v| v.parse::<u8>().ok()),
                 // fertiges Bild (mit Y-Feld) als BMP neben die .exe speichern – einmal je Eintrag
                 "p" if !std::path::Path::new(&format!("frame_{at}.bmp")).exists() => {
                     self.gba.dev_dump = Some(format!("frame_{at}.bmp"));
                 }
                 _ => {}
             }
+        }
+        if let (Some(i), Some(g)) = (equip_at, self.gba.game.as_mut()) {
+            g.equip(false, i);
         }
         if let Some(at) = cheat_at {
             if self.gba.map.dev_m != at + 1_000_000 {

@@ -333,6 +333,20 @@ patch('port/port_save.c', [
 
 # eigene Karte (Zelda Core): Die Kartenseite des Pausenmenüs entfällt, L/R wechselt zwischen Items und Quest-Status
 # (die eigene Karte öffnet mit Minus)
+patch('src/ui.c', [
+    ('''    dest = dest * 0x20 + 0x6010000;
+    divRem = DivAndMod(param_2, 10);''', '''    dest = dest * 0x20 + 0x6010000;
+#ifdef TMC_CORE_DLL
+    /* Zelda Core: Anzahl auf B/A ausgeblendet – leere Kacheln statt Ziffern (im Pausenmenü liegen auf diesen
+     * Kacheln sonst Teile der großen Item-Grafiken, deshalb hier und nicht erst beim Zeichnen) */
+    extern int gTmcCoreCountsHidden;
+    if (gTmcCoreCountsHidden) {
+        DmaFill32(3, 0, dest, 0x40);
+        return;
+    }
+#endif
+    divRem = DivAndMod(param_2, 10);'''),
+])
 patch('src/menu/pauseMenu.c', [
     ('''    DmaCopy32(3, &tiles322[temp2[1] * 0x10], dest, 0x40 * 4);
 

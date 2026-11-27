@@ -158,6 +158,15 @@ void sub_0801C2F0(u32 dest, u32 param_2) {
 #endif
 
     dest = dest * 0x20 + 0x6010000;
+#ifdef TMC_CORE_DLL
+    /* Zelda Core: Anzahl auf B/A ausgeblendet – leere Kacheln statt Ziffern (im Pausenmenü liegen auf diesen
+     * Kacheln sonst Teile der großen Item-Grafiken, deshalb hier und nicht erst beim Zeichnen) */
+    extern int gTmcCoreCountsHidden;
+    if (gTmcCoreCountsHidden) {
+        DmaFill32(3, 0, dest, 0x40);
+        return;
+    }
+#endif
     divRem = DivAndMod(param_2, 10);
     onesDigit = divRem.HALF_U.HI;
     tensDigit = divRem.HALF_U.LO;

@@ -207,6 +207,28 @@ static struct {
 static size_t sStateSize;
 static u8* sModBase;
 static u64 sModSize;
+/* Fingerabdruck dieser DLL (FNV-1a über die Datei): ein Savestate passt nur zur DLL, die ihn geschrieben hat – eine
+ * andere Fassung kann die Variablen gleich groß, aber anders angeordnet haben (Laden würde dann abstürzen) */
+static u32 sBuildId;
+
+static u32 BuildId(HMODULE self) {
+    char path[MAX_PATH];
+    u32 h = 2166136261u;
+    DWORD n = GetModuleFileNameA(self, path, sizeof(path));
+    FILE* f = (n > 0 && n < sizeof(path)) ? fopen(path, "rb") : NULL;
+    if (f == NULL)
+        return 1;
+    static u8 buf[1 << 16];
+    size_t r;
+    while ((r = fread(buf, 1, sizeof(buf), f)) > 0) {
+        for (size_t i = 0; i < r; i++) {
+            h ^= buf[i];
+            h *= 16777619u;
+        }
+    }
+    fclose(f);
+    return h ? h : 1;
+}
 
 static void FindStateSections(void) {
     HMODULE self = NULL;
@@ -226,6 +248,7 @@ static void FindStateSections(void) {
     }
     sModBase = base;
     sModSize = nt->OptionalHeader.SizeOfImage;
+    sBuildId = BuildId(self);
     sStateSize = sizeof(StateHeader) + sSec[0].n + sSec[1].n;
 }
 
@@ -240,7 +263,7 @@ EXPORT int tmc_state_save(void* out, size_t cap) {
     FindStateSections();
     if (sState != 1 || cap < sStateSize || !sSec[0].n || !sSec[1].n)
         return 0;
-    StateHeader h = { STATE_MAGIC, (u32)sSec[0].n, (u32)sSec[1].n, 0,
+    StateHeader h = { STATE_MAGIC, (u32)sSec[0].n, (u32)sSec[1].n, sBuildId,
                       (u64)(uintptr_t)sModBase, sModSize, (u64)(uintptr_t)gRomData, gRomSize };
     u8* d = (u8*)out;
     memcpy(d, &h, sizeof(h));
@@ -274,7 +297,7 @@ EXPORT int tmc_state_load(const void* in, size_t n) {
         return 0;
     memcpy(&h, d, sizeof(h));
     if (h.magic != STATE_MAGIC || h.data != sSec[0].n || h.bss != sSec[1].n || h.rom_size != gRomSize ||
-        h.mod_size != sModSize)
+        h.mod_size != sModSize || h.pad != sBuildId)
         return 0;
     memcpy(sSec[0].p, d + sizeof(h), sSec[0].n);
     memcpy(sSec[1].p, d + sizeof(h) + sSec[0].n, sSec[1].n);
@@ -910,8 +933,15 @@ int gTmcCoreMenuCapture = 0;
 EXPORT void tmc_menu_capture(int mode) {
     gTmcCoreMenuCapture = mode;
 }
+int gTmcCoreCountsHidden = 1;
 EXPORT void tmc_hide_counts(int on) {
+    if (sHideCountsOn != on) {
+        /* Ziffern beim nächsten Bild neu schreiben (leer oder sichtbar) */
+        gHUD.unk_13 = 0x7f;
+        gHUD.unk_14 = 0x7f;
+    }
     sHideCountsOn = on;
+    gTmcCoreCountsHidden = on;
 }
 
 static int IsCountedItem(u8 i) {
@@ -920,6 +950,9 @@ static int IsCountedItem(u8 i) {
 
 void TmcCore_UpdateHideCounts(void) {
     const u8* eq = Resolve(0x02002AF4u, 2);
-    gTmcCoreHideCounts = sHideCountsOn && eq != NULL && (IsCountedItem(eq[0]) || IsCountedItem(eq[1]));
+    /* die Ziffern schreibt das Spiel schon leer (gTmcCoreCountsHidden); beim Zeichnen zusätzlich leeren nur im
+     * Spiel – im Pausenmenü liegen auf diesen Kacheln die großen Item-Grafiken von A und B */
+    gTmcCoreHideCounts = sHideCountsOn && eq != NULL && gMain.substate != GAMEMAIN_SUBTASK &&
+                         (IsCountedItem(eq[0]) || IsCountedItem(eq[1]));
 }
 
