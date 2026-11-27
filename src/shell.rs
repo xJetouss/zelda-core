@@ -1053,7 +1053,7 @@ impl Root {
             (t("Steuerung", "Controls"), true),
             (t("Spiel", "Game"), has || gba),
             ("Cheats", has || gba),
-            ("Mods", !gba),
+            ("Mods", true),
         ];
         let mut bar = row().gap(px(1.0)).px(px(6.0)).h_full();
         for (i, (name, show)) in titles.iter().enumerate() {
