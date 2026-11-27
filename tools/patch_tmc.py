@@ -334,6 +334,21 @@ patch('port/port_save.c', [
 # eigene Karte (Zelda Core): Die Kartenseite des Pausenmenüs entfällt, L/R wechselt zwischen Items und Quest-Status
 # (die eigene Karte öffnet mit Minus)
 patch('src/menu/pauseMenu.c', [
+    ('''    DmaCopy32(3, &tiles322[temp2[1] * 0x10], dest, 0x40 * 4);
+
+    ammoCount = -1;''', '''    DmaCopy32(3, &tiles322[temp2[1] * 0x10], dest, 0x40 * 4);
+#ifdef TMC_CORE_DLL
+    /* Zelda Core: Aufnahme der Item-Grafiken – Bit 0: statt der Anzahl leere Kacheln */
+    extern int gTmcCoreMenuCapture;
+    if ((gTmcCoreMenuCapture & 1) && (item == 7 || item == 8)) {
+        DmaFill32(3, 0, dest, 0x40);
+        return;
+    }
+#endif
+
+    ammoCount = -1;'''),
+])
+patch('src/menu/pauseMenu.c', [
     ('''    if (sub_080A51F4() && (gMenu.field_0xc != NULL)) {
         iVar1 = -1;''', '''#ifdef TMC_CORE_DLL
     extern int gTmcCoreOwnMap, gTmcCoreMapReq;

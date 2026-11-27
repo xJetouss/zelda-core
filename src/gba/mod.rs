@@ -817,8 +817,19 @@ mod running {
             if self.rc.is_none() || self.menu_item().is_some() {
                 return out;
             }
-            let Some(st) = self.save_state() else { return out };
+            // alle Items ohne Anzahl; aus dem B-Feld kommen der Feuerstab (hat im Menü keinen Platz) und der Bogen
+            // (unter seiner Anzahl liegen im Menü Reste der Pfeil-Grafik)
+            let own: Vec<u8> = self.owned_items().into_iter().filter(|i| !matches!(i, 9 | 10 | 22)).collect();
+            self.capture_menu_pass(1, &own, &mut out);
+            out
+        }
+
+        fn capture_menu_pass(&mut self, mode: i32, items: &[u8], out: &mut std::collections::HashMap<u8, Vec<u8>>) {
+            let Some(st) = self.save_state() else { return };
             let (frame, nf, fr, fw, fh) = (self.frame.clone(), self.new_frame, self.frames, self.w, self.h);
+            if let Some(c) = &self.rc {
+                c.set_menu_capture(mode);
+            }
             // Start drücken, bis das Item-Menü offen und fertig eingeblendet ist
             let mut open_at = None;
             for f in 0..240u32 {
@@ -834,20 +845,26 @@ mod running {
                 let cursor = self.menu_item();
                 if let Some((spr, w, h)) = self.capture_sprites() {
                     let dx = w.saturating_sub(W) / 2;
-                    for i in self.owned_items() {
-                        // Bomben/Pfeile: daneben steht die Anzahl – die kommen sauberer aus dem B-Feld
-                        if minish::COUNTED.contains(&i) {
-                            continue;
-                        }
-                        let pos = self.menu_pos(i).or_else(|| self.menu_pos(match i { 15 => 16, 16 => 15, x => x }));
-                        if let Some((cx, cy)) = pos {
-                            let img = crop_inv_icon(&spr, w, h, cx + dx, cy, cursor == Some(i));
+                    for &i in items {
+                        // Bomben/Fernzünder und Laterne an/aus stehen im Menü auf demselben Platz
+                        let alt = match i {
+                            7 => 8,
+                            8 => 7,
+                            15 => 16,
+                            16 => 15,
+                            x => x,
+                        };
+                        if let Some((cx, cy)) = self.menu_pos(i).or_else(|| self.menu_pos(alt)) {
+                            let img = crop_inv_icon(&spr, w, h, cx + dx, cy, cursor == Some(i) || cursor == Some(alt));
                             if img.chunks_exact(4).filter(|p| p[3] != 0).count() > 12 {
                                 out.insert(i, img);
                             }
                         }
                     }
                 }
+            }
+            if let Some(c) = &self.rc {
+                c.set_menu_capture(0);
             }
             let mut skip = Vec::new();
             self.take_audio(&mut skip);
@@ -857,7 +874,6 @@ mod running {
             self.frames = fr;
             self.w = fw;
             self.h = fh;
-            out
         }
 
         pub fn set_hide_counts(&self, on: bool) {
@@ -2023,6 +2039,9 @@ Items {:?}", &ew[0x2AE8..0x2B04], &ew[0x2B32..0x2B54], minish::owned(&ew[0x2B32.
             for _ in 0..30 {
                 g.run_frame(0);
             }
+        }
+        if let Ok(o) = std::env::var("GBA_SAVE_TO") {
+            std::fs::write(o, lz4_flex::compress_prepend_size(&g.save_state().unwrap())).unwrap();
         }
         // Item-Menü öffnen, alle Items als Figuren aufnehmen
         for f in 0..90 {

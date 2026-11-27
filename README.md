@@ -1,4 +1,4 @@
-# Zelda Core 0.49 – A Link to the Past & The Minish Cap
+# Zelda Core 0.50 – A Link to the Past & The Minish Cap
 
 Eigener SNES-Emulator in Rust, zugeschnitten auf *The Legend of Zelda: A Link to the Past*.
 **Keine ROM enthalten** – du brauchst eine Kopie deines eigenen Moduls (`.sfc`/`.smc`).

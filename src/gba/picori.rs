@@ -77,6 +77,7 @@ struct Api {
     complete: FVoidI,
     room_exits: FProg,
     hide_counts: FInt,
+    menu_capture: FInt,
 }
 
 /// geladene DLL, ROM des laufenden Picori, Anfangszustand
@@ -167,6 +168,7 @@ fn load_api() -> Result<&'static Api, String> {
             complete: f!("tmc_cheat_complete"),
             room_exits: f!("tmc_room_exits"),
             hide_counts: f!("tmc_hide_counts"),
+            menu_capture: f!("tmc_menu_capture"),
         };
         Ok(Box::leak(Box::new(api)))
     }
@@ -525,6 +527,12 @@ impl Core {
         (0..n.min(64)).map(|i| (v[i * 7 + 1], v[i * 7 + 2], v[i * 7 + 3] as u8, v[i * 7 + 4] as u8, v[i * 7 + 5], v[i * 7 + 6])).collect()
     }
     /// Anzahl (Bomben/Pfeile) auf den Tasten ausblenden
+    /// Aufnahme aus dem Item-Menü: Bit 0 ohne Anzahl
+    pub fn set_menu_capture(&self, mode: i32) {
+        if self.ready {
+            unsafe { (self.api.menu_capture)(mode) };
+        }
+    }
     pub fn set_hide_counts(&self, on: bool) {
         if self.ready {
             unsafe { (self.api.hide_counts)(on as i32) };

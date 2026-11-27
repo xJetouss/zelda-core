@@ -25,6 +25,8 @@ pub struct GbaView {
     abuf: Vec<i16>,
     /// Bild nach Farbtabelle (Sättigung, Gamma …), vorheriges Bild (Überblenden), Mischbild
     cur: Vec<Color32>,
+    /// Entwicklung: nächstes fertiges Bild hierhin speichern
+    dev_dump: Option<String>,
     prev: Vec<Color32>,
     blend: Vec<Color32>,
     /// unscharfes Hintergrundbild für Breitbild (Rand links/rechts)
@@ -115,6 +117,7 @@ impl Default for GbaView {
             cards: HashMap::new(),
             abuf: Vec::with_capacity(4096),
             cur: Vec::new(),
+            dev_dump: None,
             prev: Vec::new(),
             blend: Vec::new(),
             back: None,
@@ -225,6 +228,12 @@ impl App {
                 if let Some(b) = std::env::var_os("PASTLINK_GBA_LOAD").and_then(|f| std::fs::read(f).ok()).map(|b| lz4_flex::decompress_size_prepended(&b).unwrap_or(b)) {
                     if let Some(g) = self.gba.game.as_mut() {
                         g.load_state(&b);
+                    }
+                }
+                // Entwicklung: Y-Item vorgeben (PASTLINK_GBA_YITEM=Nummer)
+                if let Some(y) = std::env::var("PASTLINK_GBA_YITEM").ok().and_then(|v| v.parse::<u8>().ok()) {
+                    if let Some(g) = self.gba.game.as_mut() {
+                        g.cfg.y_item = y;
                     }
                 }
                 self.s.last_gba = path.to_string_lossy().to_string();
@@ -472,7 +481,7 @@ impl App {
             }
             // Item-Grafiken aus dem Item-Menü des Spiels (die saubersten: ohne Tastenkreis, Flaschen mit Inhalt) –
             // fehlt eine oder hat man Flaschen (Inhalt wechselt), das Menü unsichtbar kurz öffnen und aufnehmen
-            let need = self.gba.bar_items.iter().any(|i| !super::minish::COUNTED.contains(i) && (!self.gba.icons_clean.contains_key(i) || (28..=31).contains(i)));
+            let need = self.gba.bar_items.iter().any(|i| !matches!(i, 9 | 10 | 22) && (!self.gba.icons_clean.contains_key(i) || (28..=31).contains(i)));
             if g.is_recomp() && need {
                 for (i, img) in g.capture_menu_icons() {
                     self.gba.icons_clean.insert(i, img.clone());
@@ -691,6 +700,9 @@ impl App {
             let mut ids: Vec<u8> = self.gba.icons_rgba.keys().copied().filter(|&i| i != 0).collect();
             ids.sort();
             let imgs: Vec<Vec<u8>> = ids.iter().map(|i| self.gba.icons_rgba[i].clone()).collect();
+            if std::env::var_os("PASTLINK_ICON_LOG").is_some() {
+                eprintln!("B-Aufnahmen {ids:?}, Kreis {}", self.gba.ring_raw.is_some());
+            }
             if imgs.len() >= 3 {
                 for (i, img) in ids.iter().zip(super::strip_ring(&imgs)) {
                     // Ersatz, solange das Item nicht aus dem Inventar aufgenommen ist: das Item (oben links im B-Feld)
@@ -700,7 +712,7 @@ impl App {
                         if let (Some(hud), Some(ring)) = (self.gba.icons_rgba.get(i), self.gba.ring_raw.as_ref()) {
                             // Item ohne Kreis, Fenster mittig um seine wirkliche Ausdehnung (kein fester Versatz, der bei
                             // manchen Items oben etwas abschnitt); Kreis-Reste fallen durch den Mehrheitsvergleich weg
-                            let out = super::item_centered_from_b(hud, ring, Some(&img));
+                            let out = super::item_from_b(hud, ring, self.gba.item_off.unwrap_or((1, 4)), false);
                             self.gba.icons_inv.insert(*i, out);
                             self.gba.inv_tex.clear();
                         }
@@ -846,6 +858,10 @@ impl App {
                 // samt Anzahl bei Bomben/Pfeilen) und auf den Y-Kreis setzen; sonst die Inventar-Grafik
                 let composed = match (y_item, self.gba.icons_rgba.get(&0)) {
                     (0, _) | (_, None) => None,
+                    // am saubersten: die Grafik aus dem Item-Menü (nichts abgeschnitten, ohne Kreis und Anzahl)
+                    (i, Some(base)) if self.gba.icons_clean.contains_key(&i) && self.gba.icons_inv.contains_key(&i) => {
+                        Some(super::compose_slot(base, &self.gba.icons_inv[&i], self.gba.item_off.unwrap_or((1, 4))))
+                    }
                     (i, Some(base)) => match (self.gba.icons_rgba.get(&i), self.gba.ring_raw.as_ref(), self.gba.icons_inv.get(&i)) {
                         (Some(hud), Some(ring), _) => Some(super::slot_from_b_nocount(base, hud, ring, y_item, self.gba.item_off.unwrap_or((1, 4)))),
                         (_, _, Some(item)) => Some(super::compose_slot(base, item, self.gba.item_off.unwrap_or((1, 4)))),
@@ -988,6 +1004,9 @@ impl App {
                     None => self.gba.back = Some(ctx.load_texture("gba-back", img, gfx::TextureOptions::LINEAR)),
                 }
             }
+        }
+        if let Some(f) = self.gba.dev_dump.take() {
+            crate::devtest_bmp(&f, self.gba.cur.len() / h.max(1), h, &self.gba.cur);
         }
         // noch kein Bild (Recomp startet noch) oder Größe passt nicht: nichts hochladen
         if self.gba.cur.len() != w * h || self.gba.prev.len() != w * h {
@@ -1244,6 +1263,10 @@ impl App {
                 "m" => map_at = Some(at),
                 // 100-%-Cheat – einmal je Eintrag
                 "c" => cheat_at = Some(at),
+                // fertiges Bild (mit Y-Feld) als BMP neben die .exe speichern – einmal je Eintrag
+                "p" if !std::path::Path::new(&format!("frame_{at}.bmp")).exists() => {
+                    self.gba.dev_dump = Some(format!("frame_{at}.bmp"));
+                }
                 _ => {}
             }
         }

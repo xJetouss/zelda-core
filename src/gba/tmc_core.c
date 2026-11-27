@@ -905,6 +905,11 @@ EXPORT int tmc_room_exits(int* out, int cap) {
  * gehören diese Kacheln sicher zu den Ziffern und nicht zu einer anderen Figur. */
 static int sHideCountsOn = 1;
 int gTmcCoreHideCounts = 0;
+/* Aufnahme der Item-Grafiken aus dem Item-Menü: Bit 0 ohne Anzahl */
+int gTmcCoreMenuCapture = 0;
+EXPORT void tmc_menu_capture(int mode) {
+    gTmcCoreMenuCapture = mode;
+}
 EXPORT void tmc_hide_counts(int on) {
     sHideCountsOn = on;
 }

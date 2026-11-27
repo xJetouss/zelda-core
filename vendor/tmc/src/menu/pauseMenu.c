@@ -1390,6 +1390,14 @@ void sub_080A5F48(Item item, u32 offset) {
         return;
     }
     DmaCopy32(3, &tiles322[temp2[1] * 0x10], dest, 0x40 * 4);
+#ifdef TMC_CORE_DLL
+    /* Zelda Core: Aufnahme der Item-Grafiken – Bit 0: statt der Anzahl leere Kacheln */
+    extern int gTmcCoreMenuCapture;
+    if ((gTmcCoreMenuCapture & 1) && (item == 7 || item == 8)) {
+        DmaFill32(3, 0, dest, 0x40);
+        return;
+    }
+#endif
 
     ammoCount = -1;
     switch (item) {
