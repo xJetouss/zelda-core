@@ -20,7 +20,7 @@ und dürfen dort fast alles:
 
 ## Aufbau
 
-- `src/api.rs`: die Schnittstelle (nicht ändern; dieselbe Datei steckt in Zelda Core, Version 7).
+- `src/api.rs`: die Schnittstelle (nicht ändern; dieselbe Datei steckt in Zelda Core, Version 8).
 - `src/lib.rs`: deine Mod. Sie exportiert `pastlink_mod()` und liefert eine `ModInfo` mit Name,
   Beschreibung, `pre_frame` / `post_frame` und optional Hook-Adressen + `on_hook`.
 
@@ -176,3 +176,11 @@ Eine Mod kann Werte der App lesen und ändern und Aktionen auslösen (gilt nach 
 | `line(x0, y0, x1, y1, breite, farbe)` / `frame_rect(x, y, w, h, breite, farbe)` | Linien und Rahmen |
 | `mouse()` → `(x, y, tasten, über_dem_bild)` | Maus in Spielpixeln (Tasten: 1 = links) |
 | `key_down("F5")` | Taste der Tastatur gedrückt (Namen wie bei den Tastenkürzeln) |
+
+### Ab Version 8: HUD-Editor
+
+Mods mit eigener Anzeige melden jedes Bild deren Fläche: `hud_box("pos", "scale", x, y, w, h)`. Im HUD-Editor
+(Menü „Mods“ → „Anzeigen verschieben“) zieht der Spieler die Anzeige mit der Maus, ändert an der Ecke unten rechts die
+Größe (Einstellung `scale` in Prozent), öffnet mit dem Stift die Einstellungen und schaltet sie mit dem X aus. Die Mod
+zeichnet ihre Anzeige mit der linken oberen Ecke an `setting_pos("pos")`. `hud_edit()` sagt, ob der Editor offen ist
+(dann die Anzeige immer zeigen). Weitere Werte: `app::UI_FPS_X100`, `app::GAME_FPS_X100`, `app::LOCAL_TIME`.

@@ -36,11 +36,26 @@ pub enum Shape {
     Frame(i32, i32, i32, i32, f32, u32),
 }
 
+/// Fläche einer Mod-Anzeige für den HUD-Editor
+#[derive(Clone, Debug)]
+pub struct HudBox {
+    /// Kennung der Mod
+    pub id: String,
+    /// Positions-Einstellung und Größen-Einstellung (leer = keine)
+    pub key: String,
+    pub scale_key: String,
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
 /// Ausgaben der Mods in einem Bild
 #[derive(Default)]
 struct Out {
     shapes: Vec<Shape>,
     speed: f32,
+    boxes: Vec<HudBox>,
 }
 
 /// Angemeldetes Bild einer Mod (RGBA)
@@ -440,6 +455,11 @@ impl Ctx<'_> {
     pub fn mouse(&self) -> (i32, i32, u32, bool) {
         self.store.mouse
     }
+    pub fn hud_box(&mut self, key: &str, scale_key: &str, x: i32, y: i32, w: i32, h: i32) {
+        if self.out.boxes.len() < 64 && !key.is_empty() {
+            self.out.boxes.push(HudBox { id: self.id.clone(), key: key.into(), scale_key: scale_key.into(), x, y, w: w.max(4), h: h.max(4) });
+        }
+    }
     pub fn key_down(&self, name: &str) -> bool {
         self.store.keys.contains(&name.to_ascii_lowercase())
     }
@@ -568,6 +588,8 @@ pub struct Mods {
     pub errors: Vec<String>,
     /// zuletzt fertige Zeichnungen / Tempo
     shown: Vec<Shape>,
+    /// zuletzt gemeldete Anzeige-Flächen (HUD-Editor)
+    shown_boxes: Vec<HudBox>,
     speed: f32,
     /// eingeschaltete Kennungen beim letzten Abgleich und Version des Hook-Satzes
     on_ids: Vec<String>,
@@ -584,12 +606,13 @@ pub struct Mods {
 
 impl Mods {
     pub fn new() -> Mods {
-        let inner = Inner { list: Vec::new(), frame: 0, out: Out { shapes: Vec::new(), speed: 1.0 }, store: Store::default(), on: Vec::new(), hook_map: HashMap::new() };
+        let inner = Inner { list: Vec::new(), frame: 0, out: Out { shapes: Vec::new(), speed: 1.0, boxes: Vec::new() }, store: Store::default(), on: Vec::new(), hook_map: HashMap::new() };
         let mut m = Mods {
             inner: Arc::new(Mutex::new(inner)),
             loaded: Vec::new(),
             errors: Vec::new(),
             shown: Vec::new(),
+            shown_boxes: Vec::new(),
             speed: 1.0,
             on_ids: Vec::new(),
             hook_version: 0,
@@ -704,6 +727,7 @@ impl Mods {
             self.hook_set = None;
             self.hook_version += 1;
             self.shown.clear();
+            self.shown_boxes.clear();
         }
         removed
     }
@@ -731,6 +755,7 @@ impl Mods {
         if !snes.rc_active() {
             snes.hooks.0 = None;
             self.shown.clear();
+            self.shown_boxes.clear();
             self.speed = 1.0;
             return;
         }
@@ -780,6 +805,7 @@ impl Mods {
         let g = &mut *g;
         if !post {
             g.out.shapes.clear();
+            g.out.boxes.clear();
             g.out.speed = 1.0;
         }
         for &k in &g.on {
@@ -834,6 +860,7 @@ impl Mods {
         }
         if on.is_empty() || !g.is_rc() || g.loading() {
             self.shown.clear();
+            self.shown_boxes.clear();
             self.speed = 1.0;
             return;
         }
@@ -843,6 +870,7 @@ impl Mods {
         let x = &mut *inner;
         if !post {
             x.out.shapes.clear();
+            x.out.boxes.clear();
             x.out.speed = 1.0;
         }
         let idx: Vec<usize> = (0..x.list.len()).filter(|&k| on.contains(&x.list[k].id) && x.list[k].games & api::GAMES_MINISH != 0).collect();
@@ -857,6 +885,7 @@ impl Mods {
         if post {
             x.frame += 1;
             self.shown.clone_from(&x.out.shapes);
+            self.shown_boxes.clone_from(&x.out.boxes);
             self.speed = x.out.speed;
         }
     }
@@ -885,13 +914,20 @@ impl Mods {
     pub fn post_frame(&mut self, snes: &mut Snes, on: &[String]) {
         if !snes.rc_active() || on.is_empty() {
             self.shown.clear();
+            self.shown_boxes.clear();
             self.speed = 1.0;
             return;
         }
         self.run(snes, true);
         let g = self.inner.lock().unwrap();
         self.shown.clone_from(&g.out.shapes);
+        self.shown_boxes.clone_from(&g.out.boxes);
         self.speed = g.out.speed;
+    }
+
+    /// Anzeige-Flächen der Mods (HUD-Editor)
+    pub fn boxes(&self) -> &[HudBox] {
+        &self.shown_boxes
     }
 
     /// Spieltempo, das die Mods wünschen (1.0 = normal)
@@ -927,7 +963,10 @@ impl Mods {
         }
         let p = p.with_clip_rect(r);
         let fid = gfx::FontId::monospace((7.0 * ky).max(10.0));
-        for s in &self.shown {
+        // Färbungen über das ganze Bild (z. B. Tag & Nacht) zuerst – sonst lägen sie über den Anzeigen anderer Mods
+        let full = |s: &&Shape| matches!(s, Shape::Rect(_, _, w, h, _) if *w as usize >= view_w && *h as usize >= view_h);
+        let order: Vec<&Shape> = self.shown.iter().filter(full).chain(self.shown.iter().filter(|s| !full(s))).collect();
+        for s in order {
             match s {
                 Shape::Image(id, x, y, w, h, tint) => {
                     let (t, iw, ih) = {
@@ -1149,6 +1188,12 @@ mod dll {
             unsafe { std::ptr::copy_nonoverlapping([x, y, b as i32, over as i32].as_ptr(), out, 4) };
         }
     }
+    extern "C" fn hud_box(ctx: *mut c_void, key: *const std::ffi::c_char, scale: *const std::ffi::c_char, x: i32, y: i32, w: i32, h: i32) {
+        if let Some(k) = key_of(key) {
+            let s = key_of(scale).unwrap_or_default();
+            cx(ctx).hud_box(&k, &s, x, y, w, h)
+        }
+    }
     extern "C" fn key_down(ctx: *mut c_void, name: *const std::ffi::c_char) -> u32 {
         key_of(name).is_some_and(|n| cx(ctx).key_down(&n)) as u32
     }
@@ -1197,6 +1242,7 @@ mod dll {
             draw_frame,
             mouse,
             key_down,
+            hud_box,
         }
     }
 
@@ -1481,6 +1527,31 @@ mod tests {
             raster(&m.shown, &mut px, g.w, g.h);
             let c: Vec<crate::gfx::Color32> = px.chunks_exact(4).map(|p| crate::gfx::Color32::from_rgb(p[0], p[1], p[2])).collect();
             crate::devtest::bmp(&format!("{out}/speedrun_{tag}.bmp"), g.w, g.h, &c);
+        }
+        m.set_values(&vals);
+        // alle Mods mit Anzeige zusammen: Bild und Flächen für den HUD-Editor
+        {
+            let hud: Vec<String> = ["fps_display", "clock", "coords", "death_counter", "session_timer", "health_display", "supply_display", "keystrokes", "speedrun", "day_night"].iter().map(|n| format!("dll:{n}.dll")).collect();
+            m.set_values(&HashMap::new());
+            m.set_app_state(HashMap::from([
+                ("play_frames".to_string(), 3600 * 83 + 1234i64),
+                ("fps_x100".to_string(), 5973),
+                ("game_fps_x100".to_string(), 5973),
+                ("ui_fps_x100".to_string(), 14400),
+                ("local_time".to_string(), 13 * 3600 + 37 * 60),
+                ("deaths".to_string(), 3),
+                ("session_frames".to_string(), 0),
+            ]));
+            run(&mut m, &mut g, &hud, 3, 0x0080 | 0x0800);
+            println!("Anzeige-Flächen: {}", m.boxes().len());
+            for b in m.boxes() {
+                println!("  {} {} {},{} {}x{}", b.id, b.key, b.x, b.y, b.w, b.h);
+            }
+            let mut px = g.frame.clone();
+            raster(&m.shown, &mut px, g.w, g.h);
+            let c: Vec<crate::gfx::Color32> = px.chunks_exact(4).map(|p| crate::gfx::Color32::from_rgb(p[0], p[1], p[2])).collect();
+            crate::devtest::bmp(&format!("{out}/hud_all.bmp"), g.w, g.h, &c);
+            assert!(m.boxes().len() >= 9);
         }
         m.set_values(&vals);
         // Entladen und wieder laden (Update ohne Neustart)

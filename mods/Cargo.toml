@@ -18,6 +18,14 @@ members = [
     "crown",
     "coin_sound",
     "full_supply",
+    "fps_display",
+    "clock",
+    "coords",
+    "death_counter",
+    "session_timer",
+    "health_display",
+    "supply_display",
+    "keystrokes",
 ]
 
 [profile.release]

@@ -3,8 +3,16 @@
 version = 4
 
 [[package]]
+name = "clock"
+version = "0.1.0"
+
+[[package]]
 name = "coin_sound"
 version = "0.4.0"
+
+[[package]]
+name = "coords"
+version = "0.1.0"
 
 [[package]]
 name = "crown"
@@ -12,7 +20,11 @@ version = "0.5.0"
 
 [[package]]
 name = "day_night"
-version = "0.5.0"
+version = "0.6.0"
+
+[[package]]
+name = "death_counter"
+version = "0.1.0"
 
 [[package]]
 name = "double_rupees"
@@ -23,6 +35,10 @@ name = "enemy_hp"
 version = "0.4.0"
 
 [[package]]
+name = "fps_display"
+version = "0.1.0"
+
+[[package]]
 name = "full_supply"
 version = "0.4.0"
 
@@ -31,12 +47,20 @@ name = "hard_damage"
 version = "0.4.0"
 
 [[package]]
+name = "health_display"
+version = "0.1.0"
+
+[[package]]
 name = "heart_regen"
 version = "0.5.0"
 
 [[package]]
 name = "info_hud"
 version = "0.5.0"
+
+[[package]]
+name = "keystrokes"
+version = "0.1.0"
 
 [[package]]
 name = "magic_regen"
@@ -51,12 +75,20 @@ name = "rainbow_enemies"
 version = "0.4.0"
 
 [[package]]
+name = "session_timer"
+version = "0.1.0"
+
+[[package]]
 name = "slowmo"
 version = "0.5.0"
 
 [[package]]
 name = "speedrun"
-version = "0.7.0"
+version = "0.8.0"
+
+[[package]]
+name = "supply_display"
+version = "0.1.0"
 
 [[package]]
 name = "tunic_colors"

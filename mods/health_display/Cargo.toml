@@ -1,0 +1,8 @@
+[package]
+name = "health_display"
+version = "0.1.0"
+edition = "2021"
+description = "Leben als Zahl (Herzen von Herzen), bei wenig Leben rot; im HUD-Editor verschieb- und skalierbar."
+
+[lib]
+crate-type = ["cdylib"]

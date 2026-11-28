@@ -439,6 +439,11 @@ pub struct App {
     pub(crate) win_mod_settings: Option<String>,
     /// Position einer Mod-Einstellung auf dem Spielbild ziehen: (Mod-Kennung, Schlüssel)
     pub(crate) mod_place: Option<(String, String)>,
+    /// HUD-Editor offen (Anzeigen der Mods verschieben, Größe ändern)
+    pub(crate) hud_edit: bool,
+    /// Ziehen im HUD-Editor: (Mod, Positions-Schlüssel, Größen-Schlüssel, Größe ändern?, Maus am Anfang, Wert am Anfang, Kasten am Anfang)
+    pub(crate) hud_drag: Option<HudDrag>,
+    pub(crate) hud_mouse_prev: bool,
     /// Bilder der App seit dem Start (für Mods: `app::SESSION_FRAMES`)
     mod_frames: u64,
     /// GBA-Modus (z. B. The Minish Cap, Kern mGBA)
@@ -684,6 +689,9 @@ impl App {
             win_mods: std::env::var("PASTLINK_OPEN").is_ok_and(|v| v == "mods"),
             win_mod_settings: None,
             mod_place: None,
+            hud_edit: false,
+            hud_drag: None,
+            hud_mouse_prev: false,
             mod_frames: 0,
             gba: Default::default(),
             win_controls: false,
@@ -3593,6 +3601,11 @@ impl App {
         self.hotkeys(ctx);
         self.handle_rebind(ctx);
         let (mut pad, turbo, double, rewind) = self.gather_input(ctx);
+        // HUD-Editor: Eingaben gehen nicht ans Spiel (die Maus verschiebt die Anzeigen)
+        if self.hud_edit {
+            pad = 0;
+            self.ctl_dpad = 0;
+        }
         let menu_pad = pad | self.ctl_dpad;
         // GBA-Modus: eigener Ablauf (kein Inventar, nichts am Spiel geändert); Minus = eigene Karte (Minish Cap)
         if self.gba.active() {
@@ -3813,6 +3826,14 @@ impl App {
         v.insert(k::WIDESCREEN.to_string(), self.s.widescreen as i64);
         v.insert(k::PAUSED.to_string(), self.paused as i64);
         v.insert(k::TURBO.to_string(), self.s.turbo_speed.round() as i64);
+        v.insert(k::UI_FPS_X100.to_string(), (self.fps * 100.0).round() as i64);
+        v.insert(k::GAME_FPS_X100.to_string(), (self.game_fps * 100.0).round() as i64);
+        v.insert(k::HUD_EDIT.to_string(), self.hud_edit as i64);
+        {
+            let mut t: windows_sys::Win32::Foundation::SYSTEMTIME = unsafe { std::mem::zeroed() };
+            unsafe { windows_sys::Win32::System::SystemInformation::GetLocalTime(&mut t) };
+            v.insert(k::LOCAL_TIME.to_string(), t.wHour as i64 * 3600 + t.wMinute as i64 * 60 + t.wSecond as i64);
+        }
         self.mods.set_app_state(v);
         for (action, key, val) in self.mods.take_app_ops() {
             if action {
@@ -3866,4 +3887,19 @@ impl App {
         self.x_using = false;
         self.x_dirty = false;
     }
+}
+
+/// Ziehen im HUD-Editor
+#[derive(Clone)]
+pub(crate) struct HudDrag {
+    pub id: String,
+    pub key: String,
+    pub scale_key: String,
+    /// an der Ecke: Größe ändern (sonst verschieben)
+    pub resize: bool,
+    /// Maus beim Anfassen (Spielpixel), Position der Anzeige (Spielpixel), Größe in Prozent, Kasten (Breite)
+    pub mouse: (f32, f32),
+    pub pos: (i32, i32),
+    pub scale: i32,
+    pub w: i32,
 }

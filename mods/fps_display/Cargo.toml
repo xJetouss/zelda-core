@@ -1,0 +1,8 @@
+[package]
+name = "fps_display"
+version = "0.1.0"
+edition = "2021"
+description = "Bilder pro Sekunde des Spiels (und auf Wunsch der Anzeige) in einem Feld; im HUD-Editor verschieb- und skalierbar."
+
+[lib]
+crate-type = ["cdylib"]

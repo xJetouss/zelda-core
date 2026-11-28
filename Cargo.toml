@@ -1,6 +1,6 @@
 [package]
 name = "zelda-core"
-version = "0.57.0"
+version = "0.58.0"
 license = "GPL-3.0-or-later"
 edition = "2021"
 default-run = "zelda-core"
@@ -13,7 +13,7 @@ smallvec = "1"
 glow = "0.14"
 glutin = { version = "0.32", default-features = false, features = ["wgl"] }
 raw-window-handle = "0.6"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_UI_Input_KeyboardAndMouse"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_SystemInformation"] }
 cpal = "0.15"
 gilrs = "0.11"
 rfd = "0.15"

@@ -1147,6 +1147,7 @@ impl App {
         // Zeichnungen der Mods (Spielpixel)
         self.mods.draw_h(painter, r, gw as usize, gh as usize, 0);
         self.mod_place_overlay(painter, ctx, r, gw as usize, gh as usize, 0);
+        self.hud_editor(painter, ctx, r, gw as usize, gh as usize, 0);
         // eigene Karte über dem Spielbild (ganze Fläche) – oder im eigenen Fenster
         if !self.s.map_own_window {
             self.gba_map_draw(area, ctx);

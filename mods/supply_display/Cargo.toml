@@ -1,0 +1,8 @@
+[package]
+name = "supply_display"
+version = "0.1.0"
+edition = "2021"
+description = "Rubine, Bomben und Pfeile untereinander in einem Feld; im HUD-Editor verschieb- und skalierbar."
+
+[lib]
+crate-type = ["cdylib"]

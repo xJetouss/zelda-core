@@ -103,12 +103,9 @@ fn draw(g: &Game, t: u64, fps: u64, splits: &[(String, u64)]) {
     let main_h = (7.0 * big + 2.0 * k).round() as i32;
     let h = pad * 2 + main_h + n as i32 * line_h + if n > 0 { pad / 2 } else { 0 };
     let (x, y) = g.setting_pos("pos").unwrap_or((4, if g.is_minish() { 22 } else { 4 }));
-    // Feld und Doppellinie (weiß außen, gold innen) wie im Item-Menü
-    g.rect(x, y, w, h, 0x081028E0);
-    let lw = k.max(1.0);
-    g.frame_rect(x, y, w, h, lw, 0xF8F8F8FF);
-    let i = (2.0 * k).round().max(2.0) as i32;
-    g.frame_rect(x + i, y + i, w - 2 * i, h - 2 * i, lw * 0.6, 0xF8D040C0);
+    // Feld und Doppellinie (weiß außen, gold innen) wie im Item-Menü; Fläche für den HUD-Editor
+    hud_panel(g, x, y, w, h, k);
+    g.hud_box("pos", "scale", x, y, w, h);
     // Zeit: weiß, mit dunklem Rand
     g.text_ex(x + w / 2, y + pad, &main, 0xFFFFFFFF, big, text::PIXEL | text::OUTLINE | text::CENTER);
     // Zwischenzeiten: Name links (gold), Zeit rechts (hellblau)

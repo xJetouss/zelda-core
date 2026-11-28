@@ -1,0 +1,8 @@
+[package]
+name = "session_timer"
+version = "0.1.0"
+edition = "2021"
+description = "Wie lange die App schon läuft (diese Sitzung); im HUD-Editor verschieb- und skalierbar."
+
+[lib]
+crate-type = ["cdylib"]

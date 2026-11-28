@@ -1,0 +1,8 @@
+[package]
+name = "clock"
+version = "0.1.0"
+edition = "2021"
+description = "Die echte Uhrzeit in einem Feld (auf Wunsch mit Sekunden); im HUD-Editor verschieb- und skalierbar."
+
+[lib]
+crate-type = ["cdylib"]

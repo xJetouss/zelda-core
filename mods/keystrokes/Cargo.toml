@@ -1,0 +1,8 @@
+[package]
+name = "keystrokes"
+version = "0.1.0"
+edition = "2021"
+description = "Zeigt, welche Tasten gerade gedrückt sind (Steuerkreuz, A, B, X, Y, L, R) – gut für Videos; im HUD-Editor verschieb- und skalierbar."
+
+[lib]
+crate-type = ["cdylib"]

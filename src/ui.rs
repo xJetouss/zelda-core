@@ -72,6 +72,7 @@ impl App {
                 // Zeichnungen der Mods (nur im Recompiled-Modus)
                 self.mods.draw(&painter, r, self.view_w, self.ext);
                 self.mod_place_overlay(&painter, ctx, r, self.view_w, 224, self.ext);
+                self.hud_editor(&painter, ctx, r, self.view_w, 224, self.ext);
                 self.inventory_overlay(ctx, &painter, area);
                 let ind = if self.turbo_on {
                     Some(format!("⏩ TURBO ×{:.0}", self.s.turbo_speed))
@@ -1095,6 +1096,151 @@ impl App {
             self.mod_place = None;
             self.win_mods = true;
             self.win_mod_settings = Some(id);
+        }
+    }
+}
+
+
+/// kleines Pixel-Symbol (7×7) für die Griffe im HUD-Editor
+fn hud_icon(p: &gfx::Painter, at: gfx::Pos2, gp: f32, kind: u8) {
+    const PEN: [u8; 7] = [0b0000011, 0b0000111, 0b0001110, 0b0011100, 0b0111000, 0b1110000, 0b1100000];
+    const XX: [u8; 7] = [0b1000001, 0b1100011, 0b0110110, 0b0011100, 0b0110110, 0b1100011, 0b1000001];
+    const SIZE: [u8; 7] = [0b0000001, 0b0000011, 0b0000101, 0b0001001, 0b0010001, 0b0100001, 0b1111111];
+    let (pat, col) = match kind {
+        0 => (PEN, Color32::from_rgb(248, 208, 64)),
+        1 => (XX, Color32::from_rgb(232, 72, 72)),
+        _ => (SIZE, Color32::WHITE),
+    };
+    // Feld wie im Item-Menü: dunkelblau, weißer Rand
+    let b = gfx::Rect::from_min_size(at, gfx::vec2(gp * 9.0, gp * 9.0));
+    p.rect_filled(b, 0.0, Color32::from_rgb(8, 16, 40));
+    p.rect_stroke(b, 0.0, Stroke::new(gp, Color32::WHITE));
+    for (y, row) in pat.iter().enumerate() {
+        for x in 0..7 {
+            if row & (64 >> x) != 0 {
+                p.rect_filled(gfx::Rect::from_min_size(at + gfx::vec2(gp * (1 + x) as f32, gp * (1 + y) as f32), gfx::vec2(gp, gp)), 0.0, col);
+            }
+        }
+    }
+}
+
+impl App {
+    /// HUD-Editor: Anzeigen der Mods mit der Maus verschieben, an der Ecke unten rechts die Größe ändern, mit dem
+    /// Stift die Einstellungen öffnen, mit dem X die Mod ausschalten. In der Mitte „Mod-Menü“; Esc beendet.
+    /// `r` = Spielbild auf dem Schirm, `view_w`×`view_h` Spielpixel, `ext` = Breitbild-Rand links
+    pub(crate) fn hud_editor(&mut self, p: &gfx::Painter, ctx: &gfx::Context, r: gfx::Rect, view_w: usize, view_h: usize, ext: usize) {
+        if !self.hud_edit {
+            return;
+        }
+        let en = self.s.ui_en;
+        let (kx, ky) = (r.width() / view_w.max(1) as f32, r.height() / view_h.max(1) as f32);
+        let gp = ky.max(1.0);
+        let (pos, down, esc) = ctx.input(|i| (i.pointer.hover_pos(), i.pointer.primary_down(), i.key_down(gfx::Key::Escape)));
+        let pressed = down && !self.hud_mouse_prev;
+        self.hud_mouse_prev = down;
+        let to_game = |m: gfx::Pos2| ((m.x - r.left()) / kx - ext as f32, (m.y - r.top()) / ky);
+        let to_screen = |x: f32, y: f32| gfx::pos2(r.left() + (x + ext as f32) * kx, r.top() + y * ky);
+        // abdunkeln (die Anzeigen bleiben darüber gut zu sehen)
+        p.rect_filled(r, 0.0, Color32::from_black_alpha(110));
+        let boxes: Vec<crate::mods::HudBox> = self.mods.boxes().to_vec();
+        let hs = 9.0 * gp;
+        let mut action: Option<(u8, crate::mods::HudBox)> = None;
+        for b in &boxes {
+            let tl = to_screen(b.x as f32, b.y as f32);
+            let br = to_screen((b.x + b.w) as f32, (b.y + b.h) as f32);
+            let rect = gfx::Rect::from_min_max(tl, br);
+            let hover = pos.is_some_and(|m| rect.expand(hs * 0.5).contains(m)) || self.hud_drag.as_ref().is_some_and(|d| d.id == b.id && d.key == b.key);
+            p.rect_stroke(rect.expand(gp), 0.0, Stroke::new(gp, if hover { Color32::from_rgb(248, 208, 64) } else { Color32::from_white_alpha(170) }));
+            // Griffe: Stift oben links, X oben rechts, Größe unten rechts
+            let pen = tl - gfx::vec2(hs * 0.5, hs * 0.5);
+            let xx = gfx::pos2(br.x - hs * 0.5, tl.y - hs * 0.5);
+            let sz = br - gfx::vec2(hs * 0.5, hs * 0.5);
+            hud_icon(p, pen, gp, 0);
+            hud_icon(p, xx, gp, 1);
+            if !b.scale_key.is_empty() {
+                hud_icon(p, sz, gp, 2);
+            }
+            if let (true, Some(m)) = (pressed, pos) {
+                let hit = |a: gfx::Pos2| gfx::Rect::from_min_size(a, gfx::vec2(hs, hs)).contains(m);
+                if hit(xx) {
+                    action = Some((1, b.clone()));
+                } else if hit(pen) {
+                    action = Some((0, b.clone()));
+                } else if !b.scale_key.is_empty() && hit(sz) {
+                    action = Some((2, b.clone()));
+                } else if rect.contains(m) && action.is_none() {
+                    action = Some((3, b.clone()));
+                }
+            }
+        }
+        // Mitte: Titel und „Mod-Menü“ im Stil der Spielmenüs
+        let gold = Color32::from_rgb(248, 208, 64);
+        let c = r.center();
+        let tp = (gp * 2.0).round().max(2.0);
+        let title = "ZELDA CORE";
+        crate::pixfont::text(p, c + gfx::vec2(tp, tp - 34.0 * gp), gfx::Align2::CENTER_TOP, title, tp, Color32::from_rgb(16, 16, 32));
+        crate::pixfont::text(p, c - gfx::vec2(0.0, 34.0 * gp), gfx::Align2::CENTER_TOP, title, tp, gold);
+        let label = tr(en, "MOD-MENÜ", "MOD MENU");
+        let bw = (crate::pixfont::width(label, gp) + 24.0 * gp).max(90.0 * gp);
+        let bb = gfx::Rect::from_center_size(c + gfx::vec2(0.0, 2.0 * gp), gfx::vec2(bw, 16.0 * gp));
+        let over_btn = pos.is_some_and(|m| bb.contains(m));
+        p.rect_filled(bb, 0.0, if over_btn { Color32::from_rgb(24, 40, 96) } else { Color32::from_rgb(8, 16, 40) });
+        p.rect_stroke(bb, 0.0, Stroke::new(gp, Color32::WHITE));
+        p.rect_stroke(bb.shrink(2.0 * gp), 0.0, Stroke::new(gp, gold));
+        crate::pixfont::text(p, bb.center() - gfx::vec2(0.0, 3.5 * gp), gfx::Align2::CENTER_TOP, label, gp, Color32::WHITE);
+        let hint = tr(en, "ZIEHEN: VERSCHIEBEN  ·  ECKE: GRÖSSE  ·  ESC: FERTIG", "DRAG: MOVE  ·  CORNER: SIZE  ·  ESC: DONE");
+        crate::pixfont::text(p, c + gfx::vec2(0.0, 16.0 * gp), gfx::Align2::CENTER_TOP, hint, (gp * 0.75).max(1.0), Color32::from_white_alpha(200));
+        if boxes.is_empty() {
+            let none = tr(en, "KEINE MOD MIT ANZEIGE AN", "NO MOD WITH A DISPLAY IS ON");
+            crate::pixfont::text(p, c + gfx::vec2(0.0, 28.0 * gp), gfx::Align2::CENTER_TOP, none, (gp * 0.75).max(1.0), gold);
+        }
+        if pressed && over_btn {
+            self.hud_edit = false;
+            self.hud_drag = None;
+            self.win_mods = true;
+            return;
+        }
+        // Aktionen an den Griffen
+        if let Some((kind, b)) = action {
+            match kind {
+                0 => {
+                    self.win_mod_settings = Some(b.id.clone());
+                    self.hud_edit = false;
+                }
+                1 => self.s.mods_on.retain(|x| *x != b.id),
+                _ => {
+                    let cur = self.s.mod_values.get(&b.id);
+                    let posv = cur.and_then(|m| m.get(&b.key)).map(|&v| (v as u32 as u16 as i16 as i32, (v as u32 >> 16) as u16 as i16 as i32)).unwrap_or((b.x, b.y));
+                    let def = self.mods.settings_of(&b.id).iter().find(|d| d.key == b.scale_key).map_or(100, |d| d.def);
+                    let scale = cur.and_then(|m| m.get(&b.scale_key)).copied().unwrap_or(def);
+                    let m = to_game(pos.unwrap_or_default());
+                    self.hud_drag = Some(crate::app::HudDrag { id: b.id.clone(), key: b.key.clone(), scale_key: b.scale_key.clone(), resize: kind == 2, mouse: m, pos: posv, scale, w: b.w });
+                }
+            }
+        }
+        // Ziehen
+        if let (Some(d), Some(m)) = (self.hud_drag.clone(), pos) {
+            if !down {
+                self.hud_drag = None;
+            } else {
+                let (gx, gy) = to_game(m);
+                let (dx, dy) = (gx - d.mouse.0, gy - d.mouse.1);
+                let vals = self.s.mod_values.entry(d.id.clone()).or_default();
+                if d.resize {
+                    let k = ((d.w as f32 + dx) / d.w.max(1) as f32).max(0.1);
+                    vals.insert(d.scale_key.clone(), ((d.scale as f32 * k).round() as i32).clamp(50, 400));
+                } else {
+                    let (x, y) = ((d.pos.0 as f32 + dx).round() as i32, (d.pos.1 as f32 + dy).round() as i32);
+                    vals.insert(d.key.clone(), crate::mods::api::setting::pos(x, y));
+                }
+                self.mods.set_values(&self.s.mod_values);
+            }
+        } else if !down {
+            self.hud_drag = None;
+        }
+        if esc {
+            self.hud_edit = false;
+            self.hud_drag = None;
         }
     }
 }

@@ -42,14 +42,14 @@ extern "C" fn post(api: *const Api) {
     let hours = (t * 24.0) as u32;
     let mins = ((t * 24.0).fract() * 60.0) as u32;
     let (sw, _) = g.screen();
-    // Uhr: vom Spieler gezogen, sonst oben rechts (The Minish Cap: unter den Knöpfen)
-    let (x, y) = g.setting_pos("clock_pos").unwrap_or((sw - 42, if g.is_minish() { 40 } else { 2 }));
-    g.rect(x, y, 40, 10, 0x00000090);
-    g.text(x + 3, y + 1, &format!("{hours:02}:{mins:02}"), if dark > 0.5 { 0xA0C0FFFF } else { 0xFFE080FF });
+    // Uhr: vom Spieler gezogen (HUD-Editor), sonst oben rechts (The Minish Cap: unter den Knöpfen)
+    let def = (sw - 44, if g.is_minish() { 40 } else { 2 });
+    hud_lines(&g, "clock_pos", "clock_scale", def, &[(format!("{hours:02}:{mins:02}"), if dark > 0.5 { HUD_BLUE } else { HUD_GOLD }, 1.0)]);
 }
 
 crate::export_mod!(c"Tag & Nacht", c"Auf der Oberwelt wird es Abend und Nacht, dann wieder Tag (Tageslänge einstellbar).", pre: None, post: Some(post), games: api::GAMES_ALTTP | api::GAMES_MINISH, icon: Some(include_bytes!("../icon.png")), settings: &[
     crate::setting!(c"minutes", c"Länge eines Tages (Minuten)|Length of a day (minutes)", setting::INT, 6, 1, 60),
     crate::setting!(c"clock", c"Uhr zeigen|Show clock", setting::BOOL, 1, 0, 1),
     crate::setting!(c"clock_pos", c"Position der Uhr|Clock position", setting::POS, setting::UNSET, 0, 0),
+    crate::setting!(c"clock_scale", c"Größe der Uhr (Prozent)|Clock size (percent)", setting::INT, 100, 50, 400),
 ]);

@@ -1508,6 +1508,11 @@ impl Root {
                 r.app.mods.shop.refresh();
             }
         }));
+        v.push(self.item("mods_hud", t("Anzeigen verschieben (HUD-Editor)…", "Move displays (HUD editor)…"), String::new(), true, false, cx, |r| {
+            r.app.hud_edit = true;
+            r.app.win_mods = false;
+            r.app.win_mod_settings = None;
+        }));
         v.push(sep().into_any_element());
         v.push(self.item("mods_reload", t("Mods neu laden", "Reload mods"), String::new(), true, false, cx, |r| r.app.mods.load_dlls()));
         v.push(self.item("mods_dir", t("Mod-Ordner öffnen", "Open mods folder"), String::new(), true, false, cx, |_| {
@@ -2024,8 +2029,9 @@ impl Root {
                             .px(px(6.0))
                             .child(div().flex_1().min_w(px(0.0)).child(label))
                             .child(div().font_family(MONO_FONT).text_color(col::dim()).child(txt))
-                            .child(button(format!("ms-{}-drag", d.key), t("Auf dem Bild ziehen", "Drag on screen"), true, cx, move |r| {
-                                r.app.mod_place = Some((idk.clone(), kk.clone()));
+                            .child(button(format!("ms-{}-drag", d.key), t("Im HUD-Editor ziehen", "Drag in the HUD editor"), true, cx, move |r| {
+                                let _ = (&idk, &kk);
+                                r.app.hud_edit = true;
                                 r.app.win_mods = false;
                                 r.app.win_mod_settings = None;
                             }))

@@ -2,7 +2,7 @@
 
 #![allow(dead_code)]
 
-use crate::api::{Api, Game};
+use crate::api::{text, Api, Game};
 
 pub const RUPEES: u32 = 0x7EF360;
 pub const HP_MAX: u32 = 0x7EF36C;
@@ -115,6 +115,67 @@ pub fn rupee_cap(g: &Game) -> u16 {
     } else {
         999
     }
+}
+
+// ---- Anzeigen im Stil der Spielmenüs (für Mods mit eigener Anzeige)
+
+/// Farben der Anzeigen
+pub const HUD_WHITE: u32 = 0xF8F8F8FF;
+pub const HUD_GOLD: u32 = 0xF8D040FF;
+pub const HUD_BLUE: u32 = 0xA0E0FFFF;
+pub const HUD_RED: u32 = 0xF06060FF;
+pub const HUD_GREEN: u32 = 0x78E078FF;
+
+/// Größe der Anzeige (Einstellung in Prozent) als Faktor
+pub fn hud_scale(g: &Game, key: &str) -> f32 {
+    g.setting_int(key, 100).clamp(50, 400) as f32 / 100.0
+}
+
+/// Feld wie im Item-Menü: dunkelblau, weiße Linie außen, goldene innen
+pub fn hud_panel(g: &Game, x: i32, y: i32, w: i32, h: i32, k: f32) {
+    g.rect(x, y, w, h, 0x081028E0);
+    g.frame_rect(x, y, w, h, k.max(1.0), HUD_WHITE);
+    let i = (2.0 * k).round().max(2.0) as i32;
+    g.frame_rect(x + i, y + i, w - 2 * i, h - 2 * i, (k * 0.6).max(0.6), 0xF8D040B0);
+}
+
+/// Anzeige aus Zeilen (Text, Farbe, Größe 1 = normal) zeichnen: Feld, Pixelschrift, Fläche für den HUD-Editor.
+/// Position/Größe aus den Einstellungen `pos_key` / `scale_key`, sonst `def`. Gibt (x, y, w, h) zurück.
+pub fn hud_lines(g: &Game, pos_key: &str, scale_key: &str, def: (i32, i32), lines: &[(String, u32, f32)]) -> (i32, i32, i32, i32) {
+    let k = hud_scale(g, scale_key);
+    let pad = (4.0 * k).round() as i32;
+    let w = lines.iter().map(|(t, _, s)| Game::pixel_text_width(t, s * k)).max().unwrap_or(0) + pad * 2;
+    let hs: Vec<i32> = lines.iter().map(|(_, _, s)| (7.0 * s * k + 2.0 * k).round() as i32).collect();
+    let h = hs.iter().sum::<i32>() + pad * 2 - (2.0 * k) as i32;
+    let (x, y) = g.setting_pos(pos_key).unwrap_or(def);
+    hud_panel(g, x, y, w, h, k);
+    let mut yy = y + pad;
+    for ((t, c, s), lh) in lines.iter().zip(&hs) {
+        let flags = text::PIXEL | if *s > 1.0 { text::OUTLINE } else { text::SHADOW } | text::CENTER;
+        g.text_ex(x + w / 2, yy, t, *c, s * k, flags);
+        yy += lh;
+    }
+    g.hud_box(pos_key, scale_key, x, y, w, h);
+    (x, y, w, h)
+}
+
+/// Standardplatz einer Anzeige: Raster unten rechts (Nummer 0, 1, 2 …: je 3 übereinander, dann eine Spalte weiter
+/// links), über der Anzeige des Spiels – im HUD-Editor frei verschiebbar
+pub fn hud_default(g: &Game, slot: i32) -> (i32, i32) {
+    let (sw, sh) = g.screen();
+    let (col, row) = (slot / 3, slot % 3);
+    (sw - 66 - col * 68, sh - 46 - row * 36)
+}
+
+/// Einstellungen „Position“ und „Größe“ für Mods mit Anzeige
+#[macro_export]
+macro_rules! hud_settings {
+    () => {
+        crate::setting!(c"pos", c"Position|Position", setting::POS, setting::UNSET, 0, 0)
+    };
+    (scale) => {
+        crate::setting!(c"scale", c"Größe (Prozent)|Size (percent)", setting::INT, 100, 50, 400)
+    };
 }
 
 /// Mod-Beschreibung und Einstiegspunkt erzeugen

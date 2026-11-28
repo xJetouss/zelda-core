@@ -1,0 +1,8 @@
+[package]
+name = "death_counter"
+version = "0.1.0"
+edition = "2021"
+description = "Wie oft Link in diesem Spielstand gestorben ist; im HUD-Editor verschieb- und skalierbar."
+
+[lib]
+crate-type = ["cdylib"]

@@ -20,7 +20,7 @@
       "name_en": "Speedrun timer",
       "desc": "Spielzeit des Spielstands im Stil der Spielmenüs, mit Zwischenzeiten (Amulette und Kristalle bzw. die vier Elemente); Zahnrad: Position frei ziehen, Größe, Anzahl der Zwischenzeiten.",
       "desc_en": "In-game time of the save in the style of the game menus, with splits (pendants and crystals, or the four elements); gear: drag it anywhere, size, number of splits.",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "icon": "speedrun.png",
       "games": [
         "alttp",
@@ -131,7 +131,7 @@
       "name_en": "Day & night",
       "desc": "Auf der Oberwelt wird es Abend und Nacht, dann wieder Tag (Zahnrad: Tageslänge, Uhr und ihre Position).",
       "desc_en": "Evening and night on the overworld, then day again (gear: day length, clock and its position).",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "icon": "day_night.png",
       "games": [
         "alttp",
@@ -201,6 +201,118 @@
       "desc_en": "Bombs and arrows (in A Link to the Past also magic) always stay full once you have them.",
       "version": "0.4.0",
       "icon": "full_supply.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
+    },
+    {
+      "id": "fps_display",
+      "file": "fps_display.dll",
+      "name": "FPS-Anzeige",
+      "name_en": "FPS display",
+      "desc": "Bilder pro Sekunde des Spiels (und auf Wunsch der Anzeige) in einem Feld; im HUD-Editor verschieb- und skalierbar.",
+      "desc_en": "Frames per second of the game (and optionally the display) in a box; movable and scalable in the HUD editor.",
+      "version": "0.1.0",
+      "icon": "fps_display.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
+    },
+    {
+      "id": "clock",
+      "file": "clock.dll",
+      "name": "Uhr",
+      "name_en": "Clock",
+      "desc": "Die echte Uhrzeit in einem Feld (auf Wunsch mit Sekunden); im HUD-Editor verschieb- und skalierbar.",
+      "desc_en": "The real time of day in a box (optionally with seconds); movable and scalable in the HUD editor.",
+      "version": "0.1.0",
+      "icon": "clock.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
+    },
+    {
+      "id": "coords",
+      "file": "coords.dll",
+      "name": "Koordinaten",
+      "name_en": "Coordinates",
+      "desc": "Links Position in der Welt (X/Y) in einem Feld; im HUD-Editor verschieb- und skalierbar.",
+      "desc_en": "Link's position in the world (X/Y) in a box; movable and scalable in the HUD editor.",
+      "version": "0.1.0",
+      "icon": "coords.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
+    },
+    {
+      "id": "death_counter",
+      "file": "death_counter.dll",
+      "name": "Todeszähler",
+      "name_en": "Death counter",
+      "desc": "Wie oft Link in diesem Spielstand gestorben ist; im HUD-Editor verschieb- und skalierbar.",
+      "desc_en": "How often Link has died in this save; movable and scalable in the HUD editor.",
+      "version": "0.1.0",
+      "icon": "death_counter.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
+    },
+    {
+      "id": "session_timer",
+      "file": "session_timer.dll",
+      "name": "Sitzungszeit",
+      "name_en": "Session time",
+      "desc": "Wie lange die App schon läuft (diese Sitzung); im HUD-Editor verschieb- und skalierbar.",
+      "desc_en": "How long the app has been running (this session); movable and scalable in the HUD editor.",
+      "version": "0.1.0",
+      "icon": "session_timer.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
+    },
+    {
+      "id": "health_display",
+      "file": "health_display.dll",
+      "name": "Lebensanzeige",
+      "name_en": "Health display",
+      "desc": "Leben als Zahl (Herzen von Herzen), bei wenig Leben rot; im HUD-Editor verschieb- und skalierbar.",
+      "desc_en": "Health as a number (hearts of hearts), red when low; movable and scalable in the HUD editor.",
+      "version": "0.1.0",
+      "icon": "health_display.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
+    },
+    {
+      "id": "supply_display",
+      "file": "supply_display.dll",
+      "name": "Vorrats-Anzeige",
+      "name_en": "Supply display",
+      "desc": "Rubine, Bomben und Pfeile untereinander in einem Feld; im HUD-Editor verschieb- und skalierbar.",
+      "desc_en": "Rupees, bombs and arrows in one box; movable and scalable in the HUD editor.",
+      "version": "0.1.0",
+      "icon": "supply_display.png",
+      "games": [
+        "alttp",
+        "minish"
+      ]
+    },
+    {
+      "id": "keystrokes",
+      "file": "keystrokes.dll",
+      "name": "Tasten-Anzeige",
+      "name_en": "Keystrokes",
+      "desc": "Zeigt, welche Tasten gerade gedrückt sind (Steuerkreuz, A, B, X, Y, L, R) – gut für Videos; im HUD-Editor verschieb- und skalierbar.",
+      "desc_en": "Shows which buttons are pressed (d-pad, A, B, X, Y, L, R) – great for videos; movable and scalable in the HUD editor.",
+      "version": "0.1.0",
+      "icon": "keystrokes.png",
       "games": [
         "alttp",
         "minish"

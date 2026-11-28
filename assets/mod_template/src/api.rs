@@ -1,4 +1,4 @@
-//! Zelda Core Mod-Schnittstelle (C-ABI, Version 7). Mods laufen in A Link to the Past im Recompiled-Modus (RC)
+//! Zelda Core Mod-Schnittstelle (C-ABI, Version 8). Mods laufen in A Link to the Past im Recompiled-Modus (RC)
 //! und – ab Version 4 – in The Minish Cap (PC-Fassung, `tmc_core.dll`).
 //!
 //! Diese Datei ist in der App und in jeder Mod dieselbe. Nicht ändern: Die App prüft `PASTLINK_MOD_ABI`.
@@ -37,13 +37,19 @@
 //!
 //! **Zeichnen und Eingaben (ab Version 7):** Text in der Pixelschrift des Spiels mit Größe, Ausrichtung und Rand
 //! (`text_ex`), Linien und Rahmen; Maus (Position im Spielbild, Tasten) und Tastatur.
+//!
+//! **HUD-Editor (ab Version 8):** Eine Mod mit eigener Anzeige meldet jedes Bild deren Fläche mit `hud_box(key,
+//! scale_key, x, y, w, h)` – `key` ist ihre Positions-Einstellung (`setting::POS`), `scale_key` ihre Größe in Prozent
+//! (`setting::INT`, leer = keine). Im HUD-Editor („Mods“ → „Anzeigen verschieben“) zieht der Spieler die Anzeige mit
+//! der Maus an ihren Platz, ändert an der Ecke unten rechts die Größe, öffnet mit dem Stift die Einstellungen und
+//! schaltet sie mit dem X aus. Die Mod zeichnet ihre Anzeige mit der linken oberen Ecke an `setting_pos(key)`.
 
 #![allow(dead_code)]
 
 use std::ffi::{c_char, c_void};
 
 /// Versionsnummer der Schnittstelle
-pub const PASTLINK_MOD_ABI: u32 = 7;
+pub const PASTLINK_MOD_ABI: u32 = 8;
 
 /// Schalter für `text_ex`
 pub mod text {
@@ -119,6 +125,15 @@ pub mod app {
     pub const MAP: &str = "map";
     /// Spielstand-Menü öffnen/schließen
     pub const STATES_MENU: &str = "states_menu";
+    // ---- weitere Werte (lesen)
+    /// Bilder pro Sekunde der Anzeige (App) × 100
+    pub const UI_FPS_X100: &str = "ui_fps_x100";
+    /// gemessene Spielbilder pro Sekunde × 100
+    pub const GAME_FPS_X100: &str = "game_fps_x100";
+    /// Ortszeit: Sekunden seit Mitternacht
+    pub const LOCAL_TIME: &str = "local_time";
+    /// HUD-Editor gerade offen (0/1) – Anzeigen sollten dann immer sichtbar sein
+    pub const HUD_EDIT: &str = "hud_edit";
     /// Tode des Spielstands auf 0
     pub const RESET_DEATHS: &str = "reset_deaths";
 }
@@ -313,6 +328,10 @@ pub struct Api {
     pub mouse: extern "C" fn(ctx: *mut c_void, out: *mut i32),
     /// Taste gedrückt? Name wie in den Tastenkürzeln, z. B. `c"F5"`, `c"Space"`, `c"A"`
     pub key_down: extern "C" fn(ctx: *mut c_void, name: *const c_char) -> u32,
+
+    // ---- ab Version 8
+    /// Fläche der eigenen Anzeige für den HUD-Editor (jedes Bild melden, in dem sie gezeichnet wird)
+    pub hud_box: extern "C" fn(ctx: *mut c_void, key: *const c_char, scale_key: *const c_char, x: i32, y: i32, w: i32, h: i32),
 }
 
 /// Beschreibung einer Mod (statisch, lebt so lange wie die DLL)
@@ -422,6 +441,18 @@ impl Game<'_> {
         }
         let b = cstr(name);
         (self.0.key_down)(self.0.ctx, b.as_ptr() as *const c_char) != 0
+    }
+    /// Fläche der eigenen Anzeige für den HUD-Editor melden (`key`: Positions-Einstellung, `scale_key`: Größe in
+    /// Prozent oder `""`)
+    pub fn hud_box(&self, key: &str, scale_key: &str, x: i32, y: i32, w: i32, h: i32) {
+        if self.0.abi >= 8 {
+            let (k, s) = (cstr(key), cstr(scale_key));
+            (self.0.hud_box)(self.0.ctx, k.as_ptr() as *const c_char, s.as_ptr() as *const c_char, x, y, w, h)
+        }
+    }
+    /// HUD-Editor offen?
+    pub fn hud_edit(&self) -> bool {
+        self.app_get(app::HUD_EDIT) == 1
     }
     /// Breite eines Texts in der Pixelschrift (Spielpixel)
     pub fn pixel_text_width(s: &str, scale: f32) -> i32 {
