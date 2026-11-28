@@ -2251,17 +2251,8 @@ impl App {
             self.msg(format!("X: {name}"));
             return;
         }
-        // X-Item gerade in Benutzung: erst das alte Y zurück, sonst stellt das Zurücksetzen später das alte Y-Item
-        // wieder ein (Anzeige und Item passen dann nicht mehr zusammen)
-        if self.x_using {
-            let (a, b, c) = self.x_restore;
-            let w = &mut g.snes.bus.wram;
-            w[0x0202] = a;
-            w[0x0303] = b;
-            w[0xF34F] = c;
-            self.x_using = false;
-            self.x_dirty = false;
-        }
+        self.x_finish();
+        let Some(g) = self.game.as_mut() else { return };
         // immer über das Spielmenü ausrüsten (auch wenn $0202 schon stimmt): nur so zeichnet das Spiel die Anzeige
         // oben neu
         let ok = quickmenu::equip(&mut g.snes, e);
@@ -3853,5 +3844,24 @@ impl App {
                 }
             }
         }
+    }
+}
+
+impl App {
+    /// X-Item gerade in Benutzung: das alte Y-Item sofort zurück. Vor jedem Wechsel des Y-Items nötig – sonst stellt
+    /// das spätere Zurücksetzen das alte Y-Item wieder ein (Anzeige und Item passen dann nicht mehr zusammen)
+    pub(crate) fn x_finish(&mut self) {
+        if !self.x_using {
+            return;
+        }
+        if let Some(g) = self.game.as_mut() {
+            let (a, b, c) = self.x_restore;
+            let w = &mut g.snes.bus.wram;
+            w[0x0202] = a;
+            w[0x0303] = b;
+            w[0xF34F] = c;
+        }
+        self.x_using = false;
+        self.x_dirty = false;
     }
 }

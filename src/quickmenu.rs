@@ -401,6 +401,15 @@ pub fn equip(s: &mut Snes, e: Entry) -> bool {
             calm = 0;
         }
     }
+    // Zelda-3-Modus: das Bild hinkt ein Bild hinterher – noch eines zeichnen, damit die Anzeige oben das neue Item
+    // zeigt (sonst bliebe bei pausiertem Spiel, z. B. im Inventar, das alte Item zu sehen)
+    if ok {
+        // Anzeige oben hochladen lassen ($16: Item-Anzeige im nächsten NMI in den Grafikspeicher) und ein Bild zeichnen
+        s.bus.wram[0x0016] = 1;
+        s.bus.joy[0] = 0;
+        s.run_frame();
+        s.bus.apu.dsp.out.clear();
+    }
     s.bus.joy[0] = saved;
     let ok = ok && r8(s, 0x7E0202) == e.idx;
     // nicht geklappt (Menü ging nicht auf): altes Item zurück – sonst zeigt die Anzeige ein anderes Item als das,
@@ -541,9 +550,19 @@ mod tests {
             s.run_frame();
             s.bus.apu.dsp.out.clear();
         }
-        println!("can_use {} modus {:02X}", can_use(&s), r8(&s, 0x7E0010));
+        println!("can_use {} modus {:02X} HUD-Ziel $0219 = {:04X}", can_use(&s), r8(&s, 0x7E0010), s.bus.wram[0x219] as u16 | (s.bus.wram[0x21A] as u16) << 8);
         let list = entries(&s);
-        let hud = |s: &Snes| s.bus.wram[0xC700..0xC800].to_vec();
+        // im echten Bild: die Y-Box oben links (SNES-Pixel x 36..60, y 12..36)
+        let hud = |s: &Snes| {
+            let fb = s.framebuffer();
+            let mut v = Vec::new();
+            for y in 12..36 {
+                for x in 36..60 {
+                    v.push(fb[y * 256 + x]);
+                }
+            }
+            v
+        };
         let mut same = 0;
         for held in [0u16, 0x0200, 0x0100] {
             for e in &list {
@@ -551,9 +570,41 @@ mod tests {
                 let before = hud(&s);
                 let was = current(&s);
                 let ok = equip(&mut s, *e);
+                if std::env::var_os("QM_TRACE").is_some() && was.idx != e.idx && held == 0 {
+                    // Ausschnitt oben links (96×48) direkt danach und nach 10 Bildern im selben Spiel speichern
+                    let shot = |s: &Snes, tag: &str| {
+                        let fb = s.framebuffer();
+                        let px: Vec<crate::gfx::Color32> = (0..48).flat_map(|y| (0..96).map(move |x| (x, y))).map(|(x, y)| {
+                            let c = fb[y * 256 + x];
+                            let f = |v: u16| ((v & 31) << 3) as u8;
+                            crate::gfx::Color32::from_rgb(f(c), f(c >> 5), f(c >> 10))
+                        }).collect();
+                        crate::devtest::bmp(&format!("{}/qm_{:02}_{tag}.bmp", std::env::var("PASTLINK_OUT").unwrap_or(".".into()), e.idx), 96, 48, &px);
+                    };
+                    shot(&s, "a");
+                    let mut line = String::new();
+                    for _ in 0..10 {
+                        line.push(if hud(&s) == before { 'A' } else { 'n' });
+                        s.run_frame();
+                        s.bus.apu.dsp.out.clear();
+                    }
+                    shot(&s, "b");
+                    println!("  Verlauf Item {:2}: {line} (A = altes Bild, n = neu)", e.idx);
+                }
                 if was.idx != e.idx && hud(&s) == before {
                     same += 1;
-                    println!("  Anzeige unverändert bei Item {}", e.idx);
+                    // später doch? (bis 120 Bilder)
+                    let mut c = s.clone();
+                    let mut later = None;
+                    for f in 0..120 {
+                        c.run_frame();
+                        c.bus.apu.dsp.out.clear();
+                        if hud(&c) != before {
+                            later = Some(f);
+                            break;
+                        }
+                    }
+                    println!("  Anzeige unverändert bei Item {} (später: {later:?}, HUD-Puffer gleich {})", e.idx, c.bus.wram[0xC700..0xC800] == s.bus.wram[0xC700..0xC800]);
                 }
                 for _ in 0..5 {
                     s.bus.joy[0] = held;

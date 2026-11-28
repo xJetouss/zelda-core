@@ -148,6 +148,16 @@ mod run {
                     pl_z3_fix_saved_tiles();
                 }
             }
+            // deutsche ROM: Ziel der HUD-Tilemap ($0219) in die US-Belegung umrechnen (0x7800.. -> 0x6000..) – sonst
+            // schreibt Zelda 3 die Anzeige oben (Y-Item, Rubine …) an die alte Stelle und sie bleibt stehen
+            if s.z3.de_bg3.is_some() {
+                let w = ram[0x219] as u16 | (ram[0x21A] as u16) << 8;
+                if (0x7800..0x8000).contains(&w) {
+                    let u = w - 0x1800;
+                    ram[0x219] = u as u8;
+                    ram[0x21A] = (u >> 8) as u8;
+                }
+            }
             b.frame_done = false;
             PPU.with(|c| c.set(&mut b.ppu as *mut Ppu));
             pl_z3_run_frame(b.joy[0]);
@@ -217,6 +227,15 @@ mod run {
 
     /// Zurück zur Emulation: Ton-Zustand übergeben
     pub fn leave(s: &mut Snes) {
+        // Ziel der HUD-Tilemap zurück in die deutsche Belegung
+        if s.z3.de_bg3.is_some() {
+            let w = s.bus.wram[0x219] as u16 | (s.bus.wram[0x21A] as u16) << 8;
+            if (0x6000..0x6800).contains(&w) {
+                let d = w + 0x1800;
+                s.bus.wram[0x219] = d as u8;
+                s.bus.wram[0x21A] = (d >> 8) as u8;
+            }
+        }
         to_de_layout(&mut s.z3, &mut s.bus.ppu);
         let mut regs = [0u8; 128];
         // Stimmen nicht neu anschlagen

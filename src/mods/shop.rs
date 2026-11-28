@@ -227,8 +227,9 @@ impl Shop {
         match versions().get(&it.file) {
             Some(v) if *v == it.version => Have::Installed,
             Some(_) => Have::Update,
-            // selbst hineinkopiert: als installiert zählen
-            None => Have::Installed,
+            // keine Version vermerkt (älterer Stand oder selbst hineinkopiert): Update anbieten – sonst bliebe eine
+            // alte Fassung für immer stehen
+            None => Have::Update,
         }
     }
 

@@ -1378,6 +1378,31 @@ mod tests {
         assert!(!m.shown.is_empty());
     }
 
+    /// Update einer geladenen Mod: entladen, Datei ersetzen, neu laden (wie die Mod-Liste)
+    #[test]
+    #[ignore]
+    fn dev_mod_update() {
+        let src = PathBuf::from(std::env::var("PASTLINK_MODS_DIR").expect("PASTLINK_MODS_DIR fehlt"));
+        let dir = Mods::dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let dll = dir.join("speedrun.dll");
+        let _ = std::fs::remove_file(&dll);
+        std::fs::copy(src.join("heart_regen.dll"), &dll).unwrap();
+        let mut m = Mods::new();
+        println!("vorher: {:?}", m.entries(false).iter().find(|e| e.0 == "dll:speedrun.dll").map(|e| e.1.clone()));
+        // neue Fassung als .new ablegen, dann wie nach dem Download neu laden
+        std::fs::copy(src.join("speedrun.dll"), dir.join("speedrun.dll.new")).unwrap();
+        m.load_dlls();
+        let now = m.entries(false).iter().find(|e| e.0 == "dll:speedrun.dll").map(|e| e.1.clone());
+        println!("nachher: {now:?}, .new noch da: {}, Einstellungen: {}", dir.join("speedrun.dll.new").exists(), m.settings_of("dll:speedrun.dll").len());
+        assert_eq!(now.as_deref(), Some("Speedrun-Timer"));
+        assert!(!m.settings_of("dll:speedrun.dll").is_empty());
+        // Deinstallieren
+        m.uninstall("speedrun.dll").unwrap();
+        println!("deinstalliert: Datei da {}", dll.exists());
+        assert!(!dll.exists());
+    }
+
     /// Alle Mods im RC-Modus prüfen (`Z3=1`: im Zelda-3-Modus)
     #[test]
     #[ignore]

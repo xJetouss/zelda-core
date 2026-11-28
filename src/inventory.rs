@@ -81,7 +81,9 @@ impl App {
             // A auf dem Spiegel: sofort benutzen
             self.x_force = Some(e);
             self.inv_close(pad);
-        } else if pressed & ((1 << 14) | (1 << 7)) != 0 && quickmenu::current(&g.snes) != e {
+        } else if pressed & ((1 << 14) | (1 << 7)) != 0 {
+            self.x_finish();
+            let Some(g) = &mut self.game else { return };
             let ok = quickmenu::equip(&mut g.snes, e);
             g.display.copy_from_slice(g.snes.framebuffer());
             self.reset_interp();
