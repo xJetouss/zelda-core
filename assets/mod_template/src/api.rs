@@ -1,4 +1,4 @@
-//! Zelda Core Mod-Schnittstelle (C-ABI, Version 6). Mods laufen in A Link to the Past im Recompiled-Modus (RC)
+//! Zelda Core Mod-Schnittstelle (C-ABI, Version 7). Mods laufen in A Link to the Past im Recompiled-Modus (RC)
 //! und – ab Version 4 – in The Minish Cap (PC-Fassung, `tmc_core.dll`).
 //!
 //! Diese Datei ist in der App und in jeder Mod dieselbe. Nicht ändern: Die App prüft `PASTLINK_MOD_ABI`.
@@ -34,13 +34,29 @@
 //! **Launcher (ab Version 6):** Eine Mod liest und ändert Werte der App (`app_get` / `app_set`, Schlüssel in
 //! `app::…`, z. B. Spielzeit des Spielstands, Lautstärke, Tempo, Breitbild, Pause) und löst Aktionen aus
 //! (`app_do`: Spielstand speichern/laden, Screenshot, Karte …). Änderungen gelten nach dem laufenden Bild.
+//!
+//! **Zeichnen und Eingaben (ab Version 7):** Text in der Pixelschrift des Spiels mit Größe, Ausrichtung und Rand
+//! (`text_ex`), Linien und Rahmen; Maus (Position im Spielbild, Tasten) und Tastatur.
 
 #![allow(dead_code)]
 
 use std::ffi::{c_char, c_void};
 
 /// Versionsnummer der Schnittstelle
-pub const PASTLINK_MOD_ABI: u32 = 6;
+pub const PASTLINK_MOD_ABI: u32 = 7;
+
+/// Schalter für `text_ex`
+pub mod text {
+    /// Pixelschrift wie im Spiel (sonst die Schrift der App)
+    pub const PIXEL: u32 = 1;
+    /// dunkler Rand um jeden Buchstaben (gut lesbar auf jedem Hintergrund)
+    pub const OUTLINE: u32 = 2;
+    /// Schatten unten rechts
+    pub const SHADOW: u32 = 4;
+    /// waagerecht mittig bzw. rechtsbündig zu `x`
+    pub const CENTER: u32 = 8;
+    pub const RIGHT: u32 = 16;
+}
 
 /// `Api::game`: A Link to the Past
 pub const GAME_ALTTP: u32 = 0;
@@ -285,6 +301,18 @@ pub struct Api {
     pub app_set: extern "C" fn(ctx: *mut c_void, key: *const c_char, value: i64),
     /// Aktion der App auslösen (`app::SAVE_STATE` …; gilt nach diesem Bild)
     pub app_do: extern "C" fn(ctx: *mut c_void, action: *const c_char, value: i64),
+
+    // ---- ab Version 7
+    /// Text mit Größe (`scale` 1.0 = normal) und Schaltern (`text::…`)
+    pub draw_text_ex: extern "C" fn(ctx: *mut c_void, x: i32, y: i32, text: *const c_char, rgba: u32, scale: f32, flags: u32),
+    /// Linie (Breite in Spielpixeln)
+    pub draw_line: extern "C" fn(ctx: *mut c_void, x0: i32, y0: i32, x1: i32, y1: i32, width: f32, rgba: u32),
+    /// Rahmen um ein Rechteck (Breite in Spielpixeln)
+    pub draw_frame: extern "C" fn(ctx: *mut c_void, x: i32, y: i32, w: i32, h: i32, width: f32, rgba: u32),
+    /// Maus: schreibt `[x, y, Tasten (1 = links, 2 = rechts), über dem Spielbild (0/1)]` nach `out`
+    pub mouse: extern "C" fn(ctx: *mut c_void, out: *mut i32),
+    /// Taste gedrückt? Name wie in den Tastenkürzeln, z. B. `c"F5"`, `c"Space"`, `c"A"`
+    pub key_down: extern "C" fn(ctx: *mut c_void, name: *const c_char) -> u32,
 }
 
 /// Beschreibung einer Mod (statisch, lebt so lange wie die DLL)
@@ -357,6 +385,47 @@ impl Game<'_> {
             let b = cstr(action);
             (self.0.app_do)(self.0.ctx, b.as_ptr() as *const c_char, value)
         }
+    }
+    /// Text mit Größe und Schaltern (`text::PIXEL | text::OUTLINE …`); ältere App: normaler Text
+    pub fn text_ex(&self, x: i32, y: i32, s: &str, rgba: u32, scale: f32, flags: u32) {
+        if self.0.abi < 7 {
+            return self.text(x, y, s, rgba);
+        }
+        let b = cstr(s);
+        (self.0.draw_text_ex)(self.0.ctx, x, y, b.as_ptr() as *const c_char, rgba, scale, flags)
+    }
+    /// Linie
+    pub fn line(&self, x0: i32, y0: i32, x1: i32, y1: i32, width: f32, rgba: u32) {
+        if self.0.abi >= 7 {
+            (self.0.draw_line)(self.0.ctx, x0, y0, x1, y1, width, rgba)
+        }
+    }
+    /// Rahmen
+    pub fn frame_rect(&self, x: i32, y: i32, w: i32, h: i32, width: f32, rgba: u32) {
+        if self.0.abi >= 7 {
+            (self.0.draw_frame)(self.0.ctx, x, y, w, h, width, rgba)
+        }
+    }
+    /// Maus: (x, y in Spielpixeln, Tasten, über dem Spielbild)
+    pub fn mouse(&self) -> (i32, i32, u32, bool) {
+        if self.0.abi < 7 {
+            return (0, 0, 0, false);
+        }
+        let mut o = [0i32; 4];
+        (self.0.mouse)(self.0.ctx, o.as_mut_ptr());
+        (o[0], o[1], o[2] as u32, o[3] != 0)
+    }
+    /// Taste der Tastatur gedrückt (Name wie in den Tastenkürzeln)
+    pub fn key_down(&self, name: &str) -> bool {
+        if self.0.abi < 7 {
+            return false;
+        }
+        let b = cstr(name);
+        (self.0.key_down)(self.0.ctx, b.as_ptr() as *const c_char) != 0
+    }
+    /// Breite eines Texts in der Pixelschrift (Spielpixel)
+    pub fn pixel_text_width(s: &str, scale: f32) -> i32 {
+        (s.chars().count() as f32 * 6.0 * scale).round() as i32
     }
     /// Schalter-Einstellung (sonst `def`)
     pub fn setting_bool(&self, key: &str, def: bool) -> bool {

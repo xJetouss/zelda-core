@@ -28,6 +28,12 @@ pub enum Shape {
     Text(i32, i32, u32, String),
     /// Bild-Nummer, x, y, w, h (0 = Originalgröße), Tönung
     Image(u32, i32, i32, i32, i32, u32),
+    /// Text mit Größe und Schaltern (`api::text::…`)
+    TextEx(i32, i32, u32, String, f32, u32),
+    /// Linie (x0, y0, x1, y1, Breite, Farbe)
+    Line(i32, i32, i32, i32, f32, u32),
+    /// Rahmen (x, y, w, h, Breite, Farbe)
+    Frame(i32, i32, i32, i32, f32, u32),
 }
 
 /// Ausgaben der Mods in einem Bild
@@ -99,6 +105,9 @@ struct Store {
     app_vals: HashMap<String, i64>,
     /// Wünsche der Mods an die App: (Aktion statt Wert?, Schlüssel, Wert) – nach dem Bild ausgeführt
     app_ops: Vec<(bool, String, i64)>,
+    /// Maus über dem Spielbild (x, y in Spielpixeln, Tasten, darüber) und gedrückte Tasten der Tastatur
+    mouse: (i32, i32, u32, bool),
+    keys: std::collections::HashSet<String>,
 }
 
 /// Eine Einstellung einer Mod (aus `pastlink_mod_settings`)
@@ -417,6 +426,22 @@ impl Ctx<'_> {
             self.store.patches.retain(|p| p.0 != cur);
             self.store.patch_version += 1;
         }
+    }
+    pub fn text_ex(&mut self, x: i32, y: i32, rgba: u32, t: String, scale: f32, flags: u32) {
+        let scale = if scale.is_finite() { scale.clamp(0.25, 16.0) } else { 1.0 };
+        self.out.shapes.push(Shape::TextEx(x, y, rgba, t, scale, flags));
+    }
+    pub fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, w: f32, rgba: u32) {
+        self.out.shapes.push(Shape::Line(x0, y0, x1, y1, if w.is_finite() { w.clamp(0.1, 64.0) } else { 1.0 }, rgba));
+    }
+    pub fn frame_rect(&mut self, x: i32, y: i32, w: i32, h: i32, width: f32, rgba: u32) {
+        self.out.shapes.push(Shape::Frame(x, y, w, h, if width.is_finite() { width.clamp(0.1, 64.0) } else { 1.0 }, rgba));
+    }
+    pub fn mouse(&self) -> (i32, i32, u32, bool) {
+        self.store.mouse
+    }
+    pub fn key_down(&self, name: &str) -> bool {
+        self.store.keys.contains(&name.to_ascii_lowercase())
     }
     /// Wert der App (Launcher)
     pub fn app_get(&self, key: &str) -> i64 {
@@ -882,13 +907,24 @@ impl Mods {
 
     /// wie `draw`, mit Bildhöhe in Spielpixeln (The Minish Cap: 160)
     pub fn draw_h(&self, p: &gfx::Painter, r: gfx::Rect, view_w: usize, view_h: usize, ext: usize) {
-        if self.shown.is_empty() || view_w == 0 || view_h == 0 {
+        // auch ohne Zeichnungen: Maus/Tastatur für die Mods aufnehmen
+        if view_w == 0 || view_h == 0 {
             return;
         }
         let kx = r.width() / view_w as f32;
         let ky = r.height() / view_h as f32;
         let at = |x: i32, y: i32| gfx::pos2(r.left() + (x as f32 + ext as f32) * kx, r.top() + y as f32 * ky);
         let col = |c: u32| Color32::from_rgba_unmultiplied((c >> 24) as u8, (c >> 16) as u8, (c >> 8) as u8, c as u8);
+        // Maus und Tastatur für die Mods (beim nächsten Bild lesbar)
+        {
+            let (pos, down, keys) = p.ctx().input(|i| (i.pointer.hover_pos(), i.pointer.primary_down(), i.keys_down_names()));
+            let mut g = self.inner.lock().unwrap();
+            g.store.mouse = match pos {
+                Some(m) => (((m.x - r.left()) / kx) as i32 - ext as i32, ((m.y - r.top()) / ky) as i32, down as u32, r.contains(m)),
+                None => (0, 0, 0, false),
+            };
+            g.store.keys = keys.into_iter().map(|k| k.to_ascii_lowercase()).collect();
+        }
         let p = p.with_clip_rect(r);
         let fid = gfx::FontId::monospace((7.0 * ky).max(10.0));
         for s in &self.shown {
@@ -906,6 +942,43 @@ impl Mods {
                     p.image(t, rect, gfx::Rect::from_min_max(gfx::pos2(0.0, 0.0), gfx::pos2(1.0, 1.0)), col(*tint));
                 }
                 Shape::Rect(x, y, w, h, c) => p.rect_filled(gfx::Rect::from_two_pos(at(*x, *y), at(x + w, y + h)), 0.0, col(*c)),
+                Shape::Line(x0, y0, x1, y1, w, c) => p.line_segment([at(*x0, *y0), at(*x1, *y1)], gfx::Stroke::new(w * ky, col(*c))),
+                Shape::Frame(x, y, w, h, bw, c) => p.rect_stroke(gfx::Rect::from_two_pos(at(*x, *y), at(x + w, y + h)), 0.0, gfx::Stroke::new(bw * ky, col(*c))),
+                Shape::TextEx(x, y, c, t, scale, flags) => {
+                    use api::text as tf;
+                    let align = if flags & tf::CENTER != 0 {
+                        gfx::Align2::CENTER_TOP
+                    } else if flags & tf::RIGHT != 0 {
+                        gfx::Align2::RIGHT_TOP
+                    } else {
+                        gfx::Align2::LEFT_TOP
+                    };
+                    let pos = at(*x, *y);
+                    let dark = Color32::from_rgba_unmultiplied(8, 8, 16, ((*c & 0xFF) as u32 * 220 / 255) as u8);
+                    if flags & tf::PIXEL != 0 {
+                        // Pixelschrift des Spiels: 1 Schriftpixel = `scale` Spielpixel
+                        let gp = ky * scale;
+                        let mut offs: Vec<gfx::Vec2> = Vec::new();
+                        if flags & tf::OUTLINE != 0 {
+                            for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+                                offs.push(gfx::vec2(dx * gp, dy * gp));
+                            }
+                        }
+                        if flags & tf::SHADOW != 0 {
+                            offs.push(gfx::vec2(gp, gp));
+                        }
+                        for o in offs {
+                            crate::pixfont::text(&p, pos + o, align, t, gp, dark);
+                        }
+                        crate::pixfont::text(&p, pos, align, t, gp, col(*c));
+                    } else {
+                        let f = gfx::FontId::monospace((7.0 * ky * scale).max(6.0));
+                        if flags & (tf::OUTLINE | tf::SHADOW) != 0 {
+                            p.text(pos + gfx::vec2(1.0, 1.0), align, t, f.clone(), dark);
+                        }
+                        p.text(pos, align, t, f, col(*c));
+                    }
+                }
                 Shape::Text(x, y, c, t) => {
                     let pos = at(*x, *y);
                     p.text(pos + gfx::vec2(1.0, 1.0), gfx::Align2::LEFT_TOP, t, fid.clone(), Color32::from_black_alpha(200));
@@ -1059,6 +1132,26 @@ mod dll {
             cx(ctx).app_op(true, &k, v)
         }
     }
+    extern "C" fn draw_text_ex(ctx: *mut c_void, x: i32, y: i32, t: *const std::ffi::c_char, c: u32, scale: f32, flags: u32) {
+        if let Some(t) = key_of(t) {
+            cx(ctx).text_ex(x, y, c, t, scale, flags)
+        }
+    }
+    extern "C" fn draw_line(ctx: *mut c_void, x0: i32, y0: i32, x1: i32, y1: i32, w: f32, c: u32) {
+        cx(ctx).line(x0, y0, x1, y1, w, c)
+    }
+    extern "C" fn draw_frame(ctx: *mut c_void, x: i32, y: i32, w: i32, h: i32, width: f32, c: u32) {
+        cx(ctx).frame_rect(x, y, w, h, width, c)
+    }
+    extern "C" fn mouse(ctx: *mut c_void, out: *mut i32) {
+        if !out.is_null() {
+            let (x, y, b, over) = cx(ctx).mouse();
+            unsafe { std::ptr::copy_nonoverlapping([x, y, b as i32, over as i32].as_ptr(), out, 4) };
+        }
+    }
+    extern "C" fn key_down(ctx: *mut c_void, name: *const std::ffi::c_char) -> u32 {
+        key_of(name).is_some_and(|n| cx(ctx).key_down(&n)) as u32
+    }
     extern "C" fn log(ctx: *mut c_void, t: *const std::ffi::c_char) {
         if !t.is_null() {
             let s = unsafe { CStr::from_ptr(t) }.to_string_lossy().into_owned();
@@ -1099,6 +1192,11 @@ mod dll {
             app_get,
             app_set,
             app_do,
+            draw_text_ex,
+            draw_line,
+            draw_frame,
+            mouse,
+            key_down,
         }
     }
 
@@ -1364,9 +1462,27 @@ mod tests {
         // Speedrun-Timer zeigt die Spielzeit des Spielstands aus der App (1 Minute)
         m.set_app_state(HashMap::from([("play_frames".to_string(), 3600i64), ("fps_x100".to_string(), 6000)]));
         run(&mut m, &mut g, &id("speedrun"), 2, 0);
-        let txt = m.shown.iter().find_map(|s| if let Shape::Text(_, _, _, t) = s { Some(t.clone()) } else { None });
+        let txt = m.shown.iter().find_map(|s| match s {
+            Shape::Text(_, _, _, t) | Shape::TextEx(_, _, _, t, ..) => Some(t.clone()),
+            _ => None,
+        });
         println!("speedrun Text {txt:?}");
         assert_eq!(txt.as_deref(), Some("01:00.00"));
+        // So sieht der Speedrun-Timer aus (normal und 200 %), mit Zwischenzeiten
+        let out = std::env::var("PASTLINK_OUT").unwrap_or(".".into());
+        for (tag, scale) in [("100", 100), ("200", 200)] {
+            let mut v = vals.clone();
+            v.entry("dll:speedrun.dll".into()).or_default().insert("scale".into(), scale);
+            v.entry("dll:speedrun.dll".into()).or_default().remove("pos");
+            m.set_values(&v);
+            m.set_app_state(HashMap::from([("play_frames".to_string(), 3600 * 83 + 1234i64), ("fps_x100".to_string(), 5973)]));
+            run(&mut m, &mut g, &id("speedrun"), 2, 0);
+            let mut px = g.frame.clone();
+            raster(&m.shown, &mut px, g.w, g.h);
+            let c: Vec<crate::gfx::Color32> = px.chunks_exact(4).map(|p| crate::gfx::Color32::from_rgb(p[0], p[1], p[2])).collect();
+            crate::devtest::bmp(&format!("{out}/speedrun_{tag}.bmp"), g.w, g.h, &c);
+        }
+        m.set_values(&vals);
         // Entladen und wieder laden (Update ohne Neustart)
         let n0 = m.entries(false).len();
         assert!(m.unload("speedrun.dll"));
@@ -1376,6 +1492,73 @@ mod tests {
         run(&mut m, &mut g, &id("speedrun"), 3, 0);
         println!("nach Neuladen: {} Zeichnungen", m.shown.len());
         assert!(!m.shown.is_empty());
+    }
+
+    /// Zeichnungen der Mods in ein Spielbild (RGBA, Spielpixel) setzen – zum Ansehen in Tests
+    fn raster(shapes: &[Shape], px: &mut [u8], w: usize, h: usize) {
+        let mut put = |x: i32, y: i32, c: u32| {
+            if x < 0 || y < 0 || x as usize >= w || y as usize >= h {
+                return;
+            }
+            let o = (y as usize * w + x as usize) * 4;
+            let a = (c & 0xFF) as u32;
+            for (k, sh) in [24, 16, 8].iter().enumerate() {
+                let v = (c >> sh) & 0xFF;
+                px[o + k] = ((px[o + k] as u32 * (255 - a) + v * a) / 255) as u8;
+            }
+        };
+        for s in shapes {
+            match s {
+                Shape::Rect(x, y, rw, rh, c) => {
+                    for yy in *y..y + rh {
+                        for xx in *x..x + rw {
+                            put(xx, yy, *c);
+                        }
+                    }
+                }
+                Shape::Frame(x, y, rw, rh, _, c) => {
+                    for xx in *x..x + rw {
+                        put(xx, *y, *c);
+                        put(xx, y + rh - 1, *c);
+                    }
+                    for yy in *y..y + rh {
+                        put(*x, yy, *c);
+                        put(x + rw - 1, yy, *c);
+                    }
+                }
+                Shape::TextEx(x, y, c, t, scale, flags) => {
+                    let k = scale.max(1.0).round() as i32;
+                    let tw = t.chars().count() as i32 * 6 * k;
+                    let x0 = if flags & api::text::CENTER != 0 { x - tw / 2 } else if flags & api::text::RIGHT != 0 { x - tw } else { *x };
+                    let mut draw = |dx: i32, dy: i32, col: u32| {
+                        for (i, ch) in t.chars().enumerate() {
+                            let bits = crate::pixfont::glyph_bits(ch);
+                            for (ry, row) in bits.iter().enumerate() {
+                                for cx in 0..5 {
+                                    if row & (16 >> cx) != 0 {
+                                        for a in 0..k {
+                                            for b in 0..k {
+                                                put(x0 + (i as i32 * 6 + cx) * k + a + dx, y + ry as i32 * k + b + dy, col);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    };
+                    if flags & api::text::OUTLINE != 0 {
+                        for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                            draw(dx * k, dy * k, 0x101018FF);
+                        }
+                    }
+                    if flags & api::text::SHADOW != 0 {
+                        draw(k, k, 0x101018FF);
+                    }
+                    draw(0, 0, *c);
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Update einer geladenen Mod: entladen, Datei ersetzen, neu laden (wie die Mod-Liste)

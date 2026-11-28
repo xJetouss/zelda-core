@@ -237,6 +237,7 @@ impl Root {
                     v.push(check(format!("gba-cheat-{k}"), c.name.clone(), c.on, true, cx, move |r| gba_toggle_cheat(r, k)).into_any_element());
                 }
             }
+            8 => v = self.mods_menu_items(cx),
             _ => {}
         }
         v

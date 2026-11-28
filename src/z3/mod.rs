@@ -168,6 +168,12 @@ mod run {
             }
             // Grafikspeicher wie bei Zelda 3, dann Zeile für Zeile mit HDMA zeichnen
             b.ppu.vram.copy_from_slice(std::slice::from_raw_parts(pl_z3_vram(), 0x8000));
+            // deutsche ROM: Zelda 3 baut die Anzeige oben aus der US-Vorlage – dort ist der Schriftzug „-LIFE-“
+            // gespiegelt aus 3 Zeichen; mit der deutschen Schrift wird daraus „-E-IER(-3-“. Deutschen Schriftzug
+            // „-ENERGIE-“ (6 eigene Zeichen) einsetzen, im HUD-Puffer und im Grafikspeicher
+            if s.z3.de_bg3.is_some() {
+                fix_de_label(&mut b.wram[0xC700 + 22 * 2..0xC700 + 28 * 2], &mut b.ppu.vram[0x6040 + 22..0x6040 + 28]);
+            }
             b.ppu.cgram.copy_from_slice(std::slice::from_raw_parts(pl_z3_cgram(), 0x100));
             let oam = std::slice::from_raw_parts(pl_z3_oam() as *const u8, 544);
             b.ppu.oam.copy_from_slice(oam);
@@ -191,6 +197,34 @@ mod run {
             let at = b.apu.dsp.out.len();
             b.apu.dsp.out.resize(at + k * 2, 0);
             pl_z3_audio(b.apu.dsp.out[at..].as_mut_ptr(), k as i32);
+        }
+    }
+
+    /// Spielstand geladen (Emulation, deutsche Belegung): ein aus dem Zelda-3-Modus mitgespeicherter US-Schriftzug
+    /// über den Herzen wird zum deutschen (HUD-Puffer und Tilemap bei 0x7840)
+    pub fn fix_saved_label(s: &mut Snes) {
+        let p = &s.bus.ppu;
+        if p.r.bg_nba[2] != 0x6000 || p.r.bg_sc[2] != 0x7A {
+            return;
+        }
+        fix_de_label(&mut s.bus.wram[0xC700 + 22 * 2..0xC700 + 28 * 2], &mut s.bus.ppu.vram[0x7840 + 22..0x7840 + 28]);
+    }
+
+    /// Schriftzug über den Herzen: US-Vorlage (Zelda 3) und deutsche ROM (Spalten 22..27 der ersten HUD-Zeile)
+    const LABEL_US: [u16; 6] = [0x288B, 0x288F, 0x24AB, 0x24AC, 0x688F, 0x688B];
+    const LABEL_DE: [u16; 6] = [0x288B, 0x28AA, 0x24AB, 0x24AC, 0x24AF, 0x248F];
+
+    /// US-Schriftzug durch den deutschen ersetzen (Puffer als Bytes, Grafikspeicher als Wörter)
+    fn fix_de_label(buf: &mut [u8], vram: &mut [u16]) {
+        let cur: Vec<u16> = buf.chunks_exact(2).map(|c| c[0] as u16 | (c[1] as u16) << 8).collect();
+        if cur == LABEL_US {
+            for (k, w) in LABEL_DE.iter().enumerate() {
+                buf[k * 2] = *w as u8;
+                buf[k * 2 + 1] = (*w >> 8) as u8;
+            }
+        }
+        if vram == LABEL_US {
+            vram.copy_from_slice(&LABEL_DE);
         }
     }
 
@@ -747,4 +781,12 @@ pub fn remap_check(rom: &[u8], ids: &[u16]) -> Vec<(u16, u16)> {
     }
     run::set_map16(rom);
     ids.iter().map(|&i| (i, unsafe { ffi::PlM16(i) })).collect()
+}
+
+/// Spielstand geladen: falschen Schriftzug über den Herzen (aus dem Zelda-3-Modus mitgespeichert) reparieren
+pub fn fix_saved_label(s: &mut Snes) {
+    #[cfg(pastlink_z3)]
+    run::fix_saved_label(s);
+    #[cfg(not(pastlink_z3))]
+    let _ = s;
 }

@@ -20,7 +20,7 @@ und dürfen dort fast alles:
 
 ## Aufbau
 
-- `src/api.rs`: die Schnittstelle (nicht ändern; dieselbe Datei steckt in Zelda Core, Version 6).
+- `src/api.rs`: die Schnittstelle (nicht ändern; dieselbe Datei steckt in Zelda Core, Version 7).
 - `src/lib.rs`: deine Mod. Sie exportiert `pastlink_mod()` und liefert eine `ModInfo` mit Name,
   Beschreibung, `pre_frame` / `post_frame` und optional Hook-Adressen + `on_hook`.
 
@@ -167,3 +167,12 @@ Eine Mod kann Werte der App lesen und ändern und Aktionen auslösen (gilt nach 
 | `app_get/app_set(app::VOLUME, 0..100)` | Lautstärke; ebenso `MUTE`, `SPEED` (Prozent), `WIDESCREEN` (0–3), `PAUSED`, `TURBO` |
 | `app_do(app::SAVE_STATE, platz)` / `app_do(app::LOAD_STATE, platz)` | Spielstand speichern / laden |
 | `app_do(app::SCREENSHOT, 0)` / `app::MAP` / `app::STATES_MENU` / `app::RESET_DEATHS` | Bildschirmfoto, Karte, Spielstand-Menü, Tode auf 0 |
+
+### Ab Version 7: schöner zeichnen, Maus und Tastatur
+
+| Funktion | Bedeutung |
+|---|---|
+| `text_ex(x, y, text, farbe, größe, text::PIXEL \| text::OUTLINE …)` | Text in der Pixelschrift des Spiels, beliebig groß, mit Rand/Schatten, links/mittig/rechts |
+| `line(x0, y0, x1, y1, breite, farbe)` / `frame_rect(x, y, w, h, breite, farbe)` | Linien und Rahmen |
+| `mouse()` → `(x, y, tasten, über_dem_bild)` | Maus in Spielpixeln (Tasten: 1 = links) |
+| `key_down("F5")` | Taste der Tastatur gedrückt (Namen wie bei den Tastenkürzeln) |

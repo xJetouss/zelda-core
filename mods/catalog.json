@@ -18,9 +18,9 @@
       "file": "speedrun.dll",
       "name": "Speedrun-Timer",
       "name_en": "Speedrun timer",
-      "desc": "Spielzeit des Spielstands (wie in der Spielstand-Liste) mit Zwischenzeiten (Amulette und Kristalle bzw. die vier Elemente); Zahnrad: Position frei ziehen.",
-      "desc_en": "In-game time of the save (as in the save list) with splits (pendants and crystals, or the four elements); gear: drag it anywhere.",
-      "version": "0.6.0",
+      "desc": "Spielzeit des Spielstands im Stil der Spielmenüs, mit Zwischenzeiten (Amulette und Kristalle bzw. die vier Elemente); Zahnrad: Position frei ziehen, Größe, Anzahl der Zwischenzeiten.",
+      "desc_en": "In-game time of the save in the style of the game menus, with splits (pendants and crystals, or the four elements); gear: drag it anywhere, size, number of splits.",
+      "version": "0.7.0",
       "icon": "speedrun.png",
       "games": [
         "alttp",

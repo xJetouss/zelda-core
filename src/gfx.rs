@@ -823,6 +823,10 @@ impl InputState {
     pub fn key_down(&self, k: Key) -> bool {
         self.keys_down.contains(&k)
     }
+    /// Namen aller gedrückten Tasten (wie in den Einstellungen)
+    pub fn keys_down_names(&self) -> Vec<String> {
+        self.keys_down.iter().map(|k| k.name().to_string()).collect()
+    }
     pub fn viewport(&self) -> &ViewportInfo {
         &self.viewport
     }

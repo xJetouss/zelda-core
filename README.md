@@ -1,4 +1,4 @@
-# Zelda Core 0.56 – A Link to the Past & The Minish Cap
+# Zelda Core 0.57 – A Link to the Past & The Minish Cap
 
 Eigener SNES-Emulator in Rust, zugeschnitten auf *The Legend of Zelda: A Link to the Past*.
 **Keine ROM enthalten** – du brauchst eine Kopie deines eigenen Moduls (`.sfc`/`.smc`).
@@ -271,8 +271,9 @@ In der Mod-Liste (Quelltext in `mods/`, jede Mod eine eigene DLL):
 | Königskrone | Bild aus einer PNG-Datei folgt Link (Bild-Schnittstelle) | beide |
 | Münz-Klang | eigener Ton bei jeder Rubine (Ton-Schnittstelle) | beide |
 
-**Eigene Mods** sind Rust-DLLs (Schnittstelle `assets/mod_template/src/api.rs`, Version 6; ältere Mods ab Version 3 laufen
-weiter). Ab Version 5 bietet eine Mod mit `pastlink_mod_settings` eigene Einstellungen an, ab Version 6 nutzt sie
+**Eigene Mods** sind Rust-DLLs (Schnittstelle `assets/mod_template/src/api.rs`, Version 7; ältere Mods ab Version 3 laufen
+weiter). Ab Version 7 zeichnet eine Mod Text in der Pixelschrift des Spiels (Größe, Rand, Ausrichtung), Linien und
+Rahmen und liest Maus und Tastatur. Ab Version 5 bietet eine Mod mit `pastlink_mod_settings` eigene Einstellungen an, ab Version 6 nutzt sie
 Funktionen des Launchers (`app_get`/`app_set`/`app_do`: Spielzeit, Lautstärke, Tempo, Breitbild, Pause, Spielstände
 speichern/laden, Screenshot, Karte …). Ab Version 4 sagt eine Mod mit `pastlink_mod_games`, ob sie auch in The Minish Cap läuft
 (dort GBA-Adressen, Zeichnen in GBA-Pixeln, Zusatz-Infos wie Links Position unter `api::minish`), und zeigt mit

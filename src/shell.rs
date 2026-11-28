@@ -1487,37 +1487,45 @@ impl Root {
                 v.push(sep().into_any_element());
                 v.push(self.item("cheats_win", t("Alle Cheats, Items & Codes…", "All cheats, items & codes…"), self.hk("win_cheats"), true, false, cx, |r| r.app.win_cheats = true));
             }
-            8 => {
-                // Mods: Liste im eigenen Fenster (installieren, an/aus), dazu Ordner und Vorlage
-                v.push(Self::heading(t("Mods (in Rust geschrieben)", "Mods (written in Rust)")));
-                let n_on = s.mods_on.len();
-                v.push(self.item("mods_list", t("Mod-Liste…", "Mod list…"), if n_on > 0 { format!("{n_on} {}", t("an", "on")) } else { String::new() }, true, true, cx, |r| {
-                    r.app.win_mods = true;
-                    if r.app.mods.shop.status() == crate::mods::shop::Status::Idle {
-                        r.app.mods.shop.refresh();
-                    }
-                }));
-                v.push(sep().into_any_element());
-                v.push(self.item("mods_reload", t("Mods neu laden", "Reload mods"), String::new(), true, false, cx, |r| r.app.mods.load_dlls()));
-                v.push(self.item("mods_dir", t("Mod-Ordner öffnen", "Open mods folder"), String::new(), true, false, cx, |_| {
-                    let d = crate::mods::Mods::dir();
-                    let _ = std::fs::create_dir_all(&d);
-                    let _ = std::process::Command::new("explorer").arg(&d).spawn();
-                }));
-                v.push(self.item("mods_tpl", t("Mod-Vorlage exportieren…", "Export mod template…"), String::new(), true, false, cx, |r| {
-                    let en = r.app.s.ui_en;
-                    if let Some(dir) = rfd::FileDialog::new().set_title(tr(en, "Ordner für die Mod-Vorlage wählen", "Choose a folder for the mod template")).pick_folder() {
-                        let m = match crate::mods::export_template(&dir) {
-                            Ok(p) => format!("{} {}", tr(en, "Mod-Vorlage gespeichert:", "Mod template saved:"), p.display()),
-                            Err(e) => format!("{} {e}", tr(en, "Mod-Vorlage nicht gespeichert:", "Mod template not saved:")),
-                        };
-                        r.app.msg(m);
-                        let _ = std::process::Command::new("explorer").arg(&dir).spawn();
-                    }
-                }));
-            }
+            8 => v = self.mods_menu_items(cx),
             _ => {}
         }
+        v
+    }
+
+    /// Menü „Mods“ (beide Spiele): Mod-Liste, neu laden, Ordner, Vorlage
+    pub(crate) fn mods_menu_items(&mut self, cx: &mut Context<Root>) -> Vec<AnyElement> {
+        let en = self.app.s.ui_en;
+        let t = move |d: &'static str, e: &'static str| tr(en, d, e);
+        let s = self.app.s.clone();
+        let mut v: Vec<AnyElement> = Vec::new();
+        // Mods: Liste im eigenen Fenster (installieren, an/aus), dazu Ordner und Vorlage
+        v.push(Self::heading(t("Mods (in Rust geschrieben)", "Mods (written in Rust)")));
+        let n_on = s.mods_on.len();
+        v.push(self.item("mods_list", t("Mod-Liste…", "Mod list…"), if n_on > 0 { format!("{n_on} {}", t("an", "on")) } else { String::new() }, true, true, cx, |r| {
+            r.app.win_mods = true;
+            if r.app.mods.shop.status() == crate::mods::shop::Status::Idle {
+                r.app.mods.shop.refresh();
+            }
+        }));
+        v.push(sep().into_any_element());
+        v.push(self.item("mods_reload", t("Mods neu laden", "Reload mods"), String::new(), true, false, cx, |r| r.app.mods.load_dlls()));
+        v.push(self.item("mods_dir", t("Mod-Ordner öffnen", "Open mods folder"), String::new(), true, false, cx, |_| {
+            let d = crate::mods::Mods::dir();
+            let _ = std::fs::create_dir_all(&d);
+            let _ = std::process::Command::new("explorer").arg(&d).spawn();
+        }));
+        v.push(self.item("mods_tpl", t("Mod-Vorlage exportieren…", "Export mod template…"), String::new(), true, false, cx, |r| {
+            let en = r.app.s.ui_en;
+            if let Some(dir) = rfd::FileDialog::new().set_title(tr(en, "Ordner für die Mod-Vorlage wählen", "Choose a folder for the mod template")).pick_folder() {
+                let m = match crate::mods::export_template(&dir) {
+                    Ok(p) => format!("{} {}", tr(en, "Mod-Vorlage gespeichert:", "Mod template saved:"), p.display()),
+                    Err(e) => format!("{} {e}", tr(en, "Mod-Vorlage nicht gespeichert:", "Mod template not saved:")),
+                };
+                r.app.msg(m);
+                let _ = std::process::Command::new("explorer").arg(&dir).spawn();
+            }
+        }));
         v
     }
 

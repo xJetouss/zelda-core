@@ -530,6 +530,80 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
+    /// Anzeige oben im Zelda-3-Modus als Bild (`PASTLINK_OUT/hud_*.bmp`): direkt, nach 120 Bildern, nach einem Wechsel
+    #[test]
+    #[ignore]
+    fn dev_z3_hud() {
+        let Some((rom, sram, path)) = crate::recomp::app_rom_for_tests() else { return };
+        let out = std::env::var("PASTLINK_OUT").unwrap_or(".".into());
+        let mut s = Snes::new(Arc::new(rom), sram, false);
+        s.load_state(&std::fs::read(path.with_extension("ss1")).unwrap()).unwrap();
+        for _ in 0..3 {
+            s.run_frame();
+        }
+        let shot = |s: &Snes, tag: &str| {
+            let fb = s.framebuffer();
+            let px: Vec<crate::gfx::Color32> = (0..56).flat_map(|y| (0..256).map(move |x| (x, y))).map(|(x, y)| {
+                let c = fb[y * 256 + x];
+                let f = |v: u16| ((v & 31) << 3) as u8;
+                crate::gfx::Color32::from_rgb(f(c), f(c >> 5), f(c >> 10))
+            }).collect();
+            crate::devtest::bmp(&format!("{out}/hud_{tag}.bmp"), 256, 56, &px);
+        };
+        crate::z3::fix_saved_label(&mut s);
+        s.run_frame();
+        shot(&s, "0emu");
+        let wrow = |s: &Snes, r: usize| (0..32).map(|i| format!("{:04X}", s.bus.wram[0xC700 + r * 64 + i * 2] as u16 | (s.bus.wram[0xC701 + r * 64 + i * 2] as u16) << 8)).collect::<Vec<_>>().join(" ");
+        println!("Puffer Zeile 0: {}", wrow(&s, 0));
+        crate::z3::sync(&mut s, true).unwrap();
+        for f in 0..120 {
+            s.run_frame();
+            s.bus.apu.dsp.out.clear();
+            if f == 2 {
+                shot(&s, "1z3");
+            }
+        }
+        shot(&s, "2z3_120");
+        let list = entries(&s);
+        if let Some(e) = list.iter().find(|e| **e != current(&s)) {
+            println!("ausrüsten {}: {}", e.idx, equip(&mut s, *e));
+        }
+        for _ in 0..10 {
+            s.run_frame();
+            s.bus.apu.dsp.out.clear();
+        }
+        shot(&s, "3z3_equip");
+        println!("HUD-Ziel {:04X}", s.bus.wram[0x219] as u16 | (s.bus.wram[0x21A] as u16) << 8);
+    }
+
+    /// Schrift der Anzeige (BG3-Zeichen 0x6800..0x6900) nach einem frischen Start mit dem Spielstand vergleichen
+    #[test]
+    #[ignore]
+    fn dev_bg3_font() {
+        let Some((rom, sram, path)) = crate::recomp::app_rom_for_tests() else { return };
+        let mut st = Snes::new(Arc::new(rom.clone()), sram, false);
+        st.load_state(&std::fs::read(path.with_extension("ss1")).unwrap()).unwrap();
+        let want: Vec<u16> = st.bus.ppu.vram[0x6400..0x6600].to_vec();
+        for t in [0x8Bu16, 0x8F, 0xAB, 0xAC] {
+            let a = 0x6000 + t as usize * 8;
+            println!("Zeichen {t:02X}: {:04X?}", &st.bus.ppu.vram[a..a + 8]);
+        }
+        let buf: Vec<u16> = (0..165).map(|i| st.bus.wram[0xC700 + i * 2] as u16 | (st.bus.wram[0xC701 + i * 2] as u16) << 8).collect();
+        let hit = (0..165).filter(|&i| st.bus.ppu.vram[0x6840 + i] == buf[i]).count();
+        println!("Spielstand: {hit}/165 Wörter bei 0x6840 gleich dem HUD-Puffer");
+        let mut s = Snes::new(Arc::new(rom), sram, false);
+        for f in 0..3000u32 {
+            s.bus.joy[0] = if f % 120 < 4 { 0x1000 } else { 0 };
+            s.run_frame();
+            s.bus.apu.dsp.out.clear();
+            if f % 300 == 0 {
+                let v = &s.bus.ppu.vram[0x6400..0x6600];
+                let same = v.iter().zip(&want).filter(|(a, b)| a == b).count();
+                println!("Bild {f}: Modus {:02X}, {same}/512 gleich dem Spielstand, BG3-Zeichen {:04X}", r8(&s, 0x7E0010), s.bus.ppu.r.bg_nba[2]);
+            }
+        }
+    }
+
     /// Schnellmenü: jedes Item ausrüsten (Kopie des Spielstands, `Z3=1`: Zelda-3-Modus) – danach muss das Spielmenü
     /// wieder zu sein
     #[test]
@@ -551,6 +625,10 @@ mod tests {
             s.bus.apu.dsp.out.clear();
         }
         println!("can_use {} modus {:02X} HUD-Ziel $0219 = {:04X}", can_use(&s), r8(&s, 0x7E0010), s.bus.wram[0x219] as u16 | (s.bus.wram[0x21A] as u16) << 8);
+        let row = |s: &Snes| (0..32).map(|i| format!("{:04X}", s.bus.ppu.vram[0x6040 + i])).collect::<Vec<_>>().join(" ");
+        let wrow = |s: &Snes| (0..32).map(|i| format!("{:04X}", s.bus.wram[0xC700 + i * 2] as u16 | (s.bus.wram[0xC701 + i * 2] as u16) << 8)).collect::<Vec<_>>().join(" ");
+        println!("VRAM vorher  {}", row(&s));
+        println!("Puffer vorher {}", wrow(&s));
         let list = entries(&s);
         // im echten Bild: die Y-Box oben links (SNES-Pixel x 36..60, y 12..36)
         let hud = |s: &Snes| {
@@ -615,6 +693,8 @@ mod tests {
             }
         }
         println!("Anzeige unverändert: {same}");
+        println!("VRAM nachher  {}", row(&s));
+        println!("Puffer nachher {}", wrow(&s));
     }
 
     #[test]

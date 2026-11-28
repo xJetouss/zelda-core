@@ -82,17 +82,46 @@ extern "C" fn post(api: *const Api) {
     if !r.running {
         return;
     }
-    let n = if g.setting_bool("splits", true) { r.splits.len().min(3) } else { 0 };
-    // Position: vom Spieler gezogen, sonst oben links (The Minish Cap: unter den Herzen)
-    let (x0, y0) = g.setting_pos("pos").unwrap_or((2, if g.is_minish() { 22 } else { 2 }));
-    g.rect(x0, y0, 86, 11 + n as i32 * 9, 0x00000090);
-    g.text(x0 + 3, y0 + 1, &time(t, fps), 0xFFFFFFFF);
-    for (k, (name, f)) in r.splits[r.splits.len() - n..].iter().enumerate() {
-        g.text(x0 + 3, y0 + 11 + k as i32 * 9, &format!("{name} {}", time(*f, fps)), 0xA0E0FFFF);
+    draw(&g, t, fps, &r.splits);
+}
+
+/// Anzeige im Stil der Spielmenüs: dunkelblaues Feld, weiße und goldene Linie, Zeit groß in der Pixelschrift
+fn draw(g: &Game, t: u64, fps: u64, splits: &[(String, u64)]) {
+    let k = g.setting_int("scale", 100).clamp(50, 400) as f32 / 100.0;
+    let n = if g.setting_bool("splits", true) { splits.len().min(g.setting_int("rows", 3).clamp(1, 8) as usize) } else { 0 };
+    let big = 2.0 * k;
+    let small = k;
+    let main = time(t, fps);
+    let rows: Vec<(String, String)> = splits[splits.len() - n..].iter().map(|(name, f)| (name.to_uppercase(), time(*f, fps))).collect();
+    // Maße in Spielpixeln (ein Zeichen der Pixelschrift ist 6 breit, 7 hoch)
+    let pad = (4.0 * k).round() as i32;
+    let main_w = Game::pixel_text_width(&main, big);
+    let rows_w = rows.iter().map(|(a, b)| Game::pixel_text_width(a, small) + Game::pixel_text_width(b, small) + (8.0 * k) as i32).max().unwrap_or(0);
+    let w = main_w.max(rows_w) + pad * 2;
+    let line_h = (9.0 * k).round() as i32;
+    // Höhe der großen Zeit: 7 Schriftpixel × Größe, darunter etwas Luft
+    let main_h = (7.0 * big + 2.0 * k).round() as i32;
+    let h = pad * 2 + main_h + n as i32 * line_h + if n > 0 { pad / 2 } else { 0 };
+    let (x, y) = g.setting_pos("pos").unwrap_or((4, if g.is_minish() { 22 } else { 4 }));
+    // Feld und Doppellinie (weiß außen, gold innen) wie im Item-Menü
+    g.rect(x, y, w, h, 0x081028E0);
+    let lw = k.max(1.0);
+    g.frame_rect(x, y, w, h, lw, 0xF8F8F8FF);
+    let i = (2.0 * k).round().max(2.0) as i32;
+    g.frame_rect(x + i, y + i, w - 2 * i, h - 2 * i, lw * 0.6, 0xF8D040C0);
+    // Zeit: weiß, mit dunklem Rand
+    g.text_ex(x + w / 2, y + pad, &main, 0xFFFFFFFF, big, text::PIXEL | text::OUTLINE | text::CENTER);
+    // Zwischenzeiten: Name links (gold), Zeit rechts (hellblau)
+    for (j, (name, tm)) in rows.iter().enumerate() {
+        let ry = y + pad + main_h + pad / 2 + j as i32 * line_h;
+        g.text_ex(x + pad, ry, name, 0xF8D040FF, small, text::PIXEL | text::SHADOW);
+        g.text_ex(x + w - pad, ry, tm, 0xA0E0FFFF, small, text::PIXEL | text::SHADOW | text::RIGHT);
     }
 }
 
 crate::export_mod!(c"Speedrun-Timer", c"Spielzeit des Spielstands mit Zwischenzeiten (Amulette und Kristalle bzw. die vier Elemente).", pre: None, post: Some(post), games: api::GAMES_ALTTP | api::GAMES_MINISH, icon: Some(include_bytes!("../icon.png")), settings: &[
     crate::setting!(c"pos", c"Position des Timers|Timer position", setting::POS, setting::UNSET, 0, 0),
+    crate::setting!(c"scale", c"Größe (Prozent)|Size (percent)", setting::INT, 100, 50, 300),
     crate::setting!(c"splits", c"Zwischenzeiten zeigen|Show splits", setting::BOOL, 1, 0, 1),
+    crate::setting!(c"rows", c"Zwischenzeiten (Anzahl)|Splits (count)", setting::INT, 3, 1, 8),
 ]);

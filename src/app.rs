@@ -1228,6 +1228,8 @@ impl App {
                 let g = self.game.as_mut().unwrap();
                 match g.snes.load_state(&d) {
                     Ok(_) => {
+                        // Spielstände aus dem Zelda-3-Modus (bis 0.56): falscher Schriftzug über den Herzen
+                        crate::z3::fix_saved_label(&mut g.snes);
                         g.rewind.clear();
                         g.display.copy_from_slice(g.snes.framebuffer());
                         g.wide.clear();
